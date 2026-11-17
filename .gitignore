@@ -10,3 +10,6 @@ dist/
 
 # 本地草稿（勿提交）
 scratch/
+
+# 自托管形态的前端产物（scripts/make-webapp.sh 生成，源码在仓库根）
+webapp/

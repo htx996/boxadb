@@ -2,6 +2,9 @@
 import * as BoxTerm from './terminal.js';
 import * as Icons from './icons.js';
 
+// 自托管形态（Docker / 飞牛）由服务端注入该 meta；此形态下桥在 NAS 上，USB 入口不渲染。
+const SELF_HOSTED = !!document.querySelector('meta[name="boxadb-mode"][content="selfhosted"]');
+
 const state = {
   connected: false,
   connecting: false,
@@ -65,8 +68,7 @@ async function doConnect() {
   if (state.demo) return;
   // crypto.subtle 只在安全上下文（https 或 localhost）可用——没有它无法生成 ADB 密钥
   if (!(window.isSecureContext && window.crypto && window.crypto.subtle)) {
-    toast('当前页面不是安全上下文：请改用 https://NAS地址:5667 访问飞牛（或本地 localhost），否则浏览器不允许生成 ADB 密钥。', 'err', 6000);
-    return;
+    showInsecureDialog(); return;
   }
   if (state.connected) { const T=await tango(); await T.disconnect(); BoxTerm.closeSession(); Icons.reset(); state.connected=false; state.device=null; renderStatus(); toast('已断开','warn'); return; }
   const ip=$('#device-ip').value.trim();
@@ -85,7 +87,7 @@ async function doConnect() {
 async function doConnectUsb() {
   if (state.demo) return;
   if (!(window.isSecureContext && window.crypto && window.crypto.subtle)) {
-    toast('当前页面不是安全上下文，浏览器无法生成 ADB 密钥（请用 https 或 localhost）。', 'err', 6000); return;
+    showInsecureDialog(); return;
   }
   if (state.connected) { toast('已连接；如需换连接方式，请先点上方「断开」。', 'warn'); return; }
   state.connecting=true; renderStatus();
@@ -105,7 +107,9 @@ function bindHeader(){
   const ut=$('#usb-toggle'); if (ut) ut.addEventListener('click', ()=>{ const p=$('#usb-panel'); if (p) p.hidden=!p.hidden; });
   const ub=$('#connect-usb-btn'); if (ub) ub.addEventListener('click', doConnectUsb);
   const uc=$('#usb-close'); if (uc) uc.addEventListener('click', ()=>{ const p=$('#usb-panel'); if (p) p.hidden=true; });
-  if (!navigator.usb) { const t=$('#usb-toggle'); if (t) t.hidden=true; const p=$('#usb-panel'); if (p) p.hidden=true; }
+  // HTML 默认 hidden：Pages / 桌面版且浏览器支持 WebUSB 时才显示
+  if (!SELF_HOSTED && navigator.usb) { const t=$('#usb-toggle'); if (t) t.hidden=false; }
+  else { const p=$('#usb-panel'); if (p) p.hidden=true; }
   state.prefs=loadPrefs();
   if (state.prefs.ip) $('#device-ip').value=state.prefs.ip;
 }
@@ -285,10 +289,64 @@ function bindProto(){ const b=$('#prototype-banner'); if(b) $('#proto-close')?.a
 // ── 演示预览 ───────────────────────────────────────────
 function seedDemo(){ state.demo=true; state.connected=true; state.device=demoDevice(); renderStatus(); renderAppGrid(DEMO_APPS); }
 
+// ── 非加密访问引导（浏览器禁止 http 页面生成 ADB 密钥）────────
+// 计算最可能的 https 地址：飞牛默认 5666(http)→5667(https)；http 默认端口→https 默认端口；其余端口原样保留
+// 飞牛网关路径（/app/xxx）统一跳桌面主页：飞牛没有可直达应用窗口的深链，
+// 窗口开关由桌面自己负责，跳主页最一致
+function insecureFixUrl(){
+  try{
+    const u=new URL(location.href);
+    let p=u.port;
+    if(p==='5666') p='5667';
+    else if(p==='80') p='';
+    const host=p?`${u.hostname}:${p}`:u.hostname;
+    if(/^\/app\//i.test(u.pathname)) return `https://${host}/`;
+    return `https://${host}${u.pathname}${u.search}${u.hash}`;
+  }catch(err){ return ''; }
+}
+function showInsecureDialog(){
+  const m=$('#insecure-modal'); if(!m) return;
+  // 两套引导按「服务是否自带 https 端口」分流（不能复用 SELF_HOSTED）：
+  //   有 boxadb-tls-port（Docker/NAS 容器）→ 一键切自己的 https；
+  //   没有（飞牛网关，加密入口是 5667）→ 走「打开飞牛加密主页」
+  const tlsPort=(document.querySelector('meta[name="boxadb-tls-port"]')?.content||'').trim();
+  const ownTls=/^\d{2,5}$/.test(tlsPort);
+  const fnosBox=$('#insecure-fnos'), selfBox=$('#insecure-selfhost');
+  if(fnosBox) fnosBox.hidden = ownTls || !SELF_HOSTED;
+  if(selfBox) selfBox.hidden = !ownTls;
+
+  const httpsUrl=ownTls
+    ? `https://${location.hostname}:${tlsPort}${location.pathname}${location.search}` : '';
+  const tbtn=$('#insecure-tls'), turl=$('#insecure-tls-url');
+  if(tbtn) tbtn.hidden=!httpsUrl;
+  if(turl) turl.textContent=httpsUrl?`将打开：${httpsUrl}`:'';
+  if(tbtn) tbtn.onclick=()=>{
+    if(window.self===window.top){ location.replace(httpsUrl); return; }
+    const w=window.open(httpsUrl,'_blank','noopener');
+    if(!w){ toast('浏览器拦住了新标签，请手动把地址里的 http:// 改成 https://','err',8000); return; }
+    toast('证书提示页点「高级 → 继续访问」，只需一次即可长期使用','info',7000);
+  };
+  const url=ownTls?'':insecureFixUrl();
+  const s=$('#insecure-url'); if(s) s.textContent=url?`将打开：${url}`:'';
+  const b=$('#insecure-fix');
+  if(b) b.onclick=()=>{
+    if(!url){ toast('无法自动计算地址，请手动修改','warn'); return; }
+    if (window.self === window.top) { location.replace(url); return; }
+    // iframe 内（飞牛桌面）必须开新标签：自签证书警告只在整页可点「继续访问」
+    const w=window.open(url, '_blank', 'noopener');
+    if(!w){ toast('浏览器拦住了新标签：请手动把地址里的 http:// 改成 https://、端口 5666 改成 5667','err',8000); return; }
+    toast('已打开飞牛加密主页：证书提示页点「高级 → 继续访问」，然后在桌面重新点开「盒子助手」','info',8000);
+  };
+  const l=$('#insecure-later'); if(l) l.onclick=()=>{ m.hidden=true; };
+  m.hidden=false;
+}
+
 // ── 启动 ───────────────────────────────────────────────
 function boot(){
   bindProto(); bindHeader(); bindTabs(); bindTabsNav(); bindInstall(); bindApps(); bindRemote(); bindLog();
   renderStatus();
   if (location.search.includes('demo=1')) seedDemo();
+  // 非加密页面整个 ADB 流程都不可用 → 打开页面就主动引导（演示模式除外）
+  if (!(window.isSecureContext && window.crypto && window.crypto.subtle) && !state.demo) showInsecureDialog();
 }
 document.addEventListener('DOMContentLoaded', boot);

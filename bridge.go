@@ -6,9 +6,9 @@
 //
 // 本程序不解析 ADB 协议——ADB 全部由浏览器端的 MIT 引擎（Tango）完成，
 // 这里只做两件事：
-//   1) GET /health       —— 探活；
-//   2) GET /adb?host=&port= —— 升级为 WebSocket(RFC 6455, IETF 公开规范)，
-//      并与目标 TCP 地址互搬字节。
+//  1. GET /health       —— 探活；
+//  2. GET /adb?host=&port= —— 升级为 WebSocket(RFC 6455, IETF 公开规范)，
+//     并与目标 TCP 地址互搬字节。
 package main
 
 import (
@@ -24,14 +24,25 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
 
 // ── 配置 ──
 
-const listenHost = "127.0.0.1"
+// 桌面形态默认只监听回环；Docker/NAS 形态用 BRIDGE_HOST=0.0.0.0 对外提供服务。
+func listenHost() string {
+	if h := os.Getenv("BRIDGE_HOST"); h != "" {
+		return h
+	}
+	return "127.0.0.1"
+}
+
 const wsGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+// 是否因收到信号而关闭：区分「正常停止」与启动失败
+var stopping atomic.Bool
 
 func listenPort() string {
 	if p := os.Getenv("BRIDGE_PORT"); p != "" {
@@ -200,6 +211,10 @@ func handleTunnel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "websocket upgrade required", http.StatusBadRequest)
 		return
 	}
+	if !targetAllowed(host) {
+		http.Error(w, "目标地址被拒绝：只允许局域网/VPN 私网地址（如需连公网地址，请设 BRIDGE_PRIVATE_ONLY=0）", http.StatusForbidden)
+		return
+	}
 
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
@@ -241,6 +256,13 @@ func allowCross(w http.ResponseWriter) {
 
 func router(w http.ResponseWriter, r *http.Request) {
 	allowCross(w)
+	// http 侧把非本机地址的页面请求跳到内置 https（安全上下文，手机才能用）
+	if r.TLS == nil {
+		if h := httpsRedirectHost(r); h != "" {
+			http.Redirect(w, r, redirectTarget(r, h), http.StatusFound)
+			return
+		}
+	}
 	switch {
 	case r.Method == http.MethodOptions:
 		w.WriteHeader(http.StatusNoContent)
@@ -250,8 +272,38 @@ func router(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/adb":
 		handleTunnel(w, r)
 	default:
+		if static := staticHandler(); static != nil {
+			static.ServeHTTP(w, r) // 自托管形态：网页由本进程发出
+			return
+		}
 		http.NotFound(w, r)
 	}
+}
+
+// 隧道目标白名单：防常驻服务被当通用内网代理（SSRF）
+func privateOnlyOn() bool {
+	if v := os.Getenv("BRIDGE_PRIVATE_ONLY"); v != "" {
+		return v == "1" || strings.EqualFold(v, "true")
+	}
+	return privateOnlyDefault()
+}
+
+func targetAllowed(host string) bool {
+	if !privateOnlyOn() {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || isCGNAT(ip)
+}
+
+// 100.64.0.0/10 为 Tailscale 等 CGNAT 段，走 VPN 连远端盒子需放行
+func isCGNAT(ip net.IP) bool {
+	_, net100, err := net.ParseCIDR("100.64.0.0/10")
+	return err == nil && net100.Contains(ip)
 }
 
 func isIPv4(s string) bool {
@@ -261,8 +313,32 @@ func isIPv4(s string) bool {
 
 // ── 启动 ──
 
+// 容器 HEALTHCHECK：scratch 里没有 shell/curl，用本程序自探 /health，失败非 0
+func healthCheck() int {
+	addr := net.JoinHostPort(listenHost(), listenPort())
+	if listenHost() == "0.0.0.0" || listenHost() == "::" || listenHost() == "" {
+		addr = net.JoinHostPort("127.0.0.1", listenPort()) // 对外监听时自己走回环探
+	}
+	c := &http.Client{Timeout: 3 * time.Second}
+	resp, err := c.Get("http://" + addr + "/health")
+	if err != nil {
+		log.Printf("healthcheck 失败: %v", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("healthcheck 状态码 %d", resp.StatusCode)
+		return 1
+	}
+	return 0
+}
+
 func main() {
-	addr := net.JoinHostPort(listenHost, listenPort())
+	if len(os.Args) > 1 && os.Args[1] == "-healthcheck" {
+		os.Exit(healthCheck())
+	}
+	addr := net.JoinHostPort(listenHost(), listenPort())
 
 	// 幂等保护：已有一个桥在监听时直接退出（重复双击图标无害）
 	if c, err := net.DialTimeout("tcp", addr, 300*time.Millisecond); err == nil {
@@ -276,17 +352,38 @@ func main() {
 	if err != nil {
 		log.Fatalf("listen %s: %v", addr, err)
 	}
-	log.Printf("boxadb bridge listening on http://%s (health: /health, tunnel: /adb)", addr)
+	mode := "本机桥（网页请用 GitHub Pages）"
+	if staticHandler() != nil {
+		mode = "自托管：网页 + 桥同源"
+	}
+	log.Printf("boxadb bridge listening on http://%s  [%s]", addr, mode)
+	log.Printf("  health: /health   tunnel: /adb?host=&port=   仅私网目标=%v", privateOnlyOn())
+
+	stop := make(chan struct{})
+	if p := httpsPort(); p != "" {
+		go serveHTTPS(http.HandlerFunc(router), stop)
+		log.Printf("  手机/其他设备请用 %s（局域网 http 地址会被自动引导到 https）", httpsURLHint())
+	} else {
+		log.Printf("  https 已关闭（BRIDGE_HTTPS_PORT=0）；手机等非 localhost 访问将无法生成密钥")
+	}
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sig
 		log.Println("shutting down")
-		ln.Close()
+		stopping.Store(true)
+		close(stop)
 		srv.Close()
+		ln.Close()
 	}()
 	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+		// 信号关闭会让 Serve 报 use of closed network connection，属正常停止，
+		// 不能当致命错误（否则 docker stop 退出码为 1）
+		if stopping.Load() {
+			log.Println("已停止")
+			return
+		}
 		log.Fatalf("serve: %v", err)
 	}
 }

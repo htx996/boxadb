@@ -3,7 +3,16 @@ import * as stream from './vendor/stream-extra.js';
 import CredentialStore from './vendor/adb-credential-web.js';
 import { unzipSync } from './vendor/fflate.js';
 
-export const BRIDGE_BASE = 'http://127.0.0.1:8765'; // 固定值，不给用户填
+// 桥地址：Pages 场景固定连本机 127.0.0.1:8765。
+// 自托管形态（NAS/Docker）改为同源 + 前缀，前缀由服务端运行时注入，前端无构建期改写：
+//   <meta name="boxadb-mode" content="selfhosted"> + <meta name="boxadb-prefix" ...>（容器为空）
+export const selfHosted = typeof document !== 'undefined'
+  && document.querySelector('meta[name="boxadb-mode"]')?.content === 'selfhosted';
+const bridgePrefix = typeof document !== 'undefined'
+  ? (document.querySelector('meta[name="boxadb-prefix"]')?.content || '') : '';
+export const BRIDGE_BASE = selfHosted
+  ? `${location.protocol}//${location.host}${bridgePrefix}`
+  : 'http://127.0.0.1:8765';
 const DEFAULT_PORT = 5555;                            // 固定端口，不进输入框
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -322,6 +331,24 @@ async function parsePackage(file) {
   throw new Error('不支持的文件类型（仅支持 .apk / .xapk / .apkm）');
 }
 
+// ── 把 INSTALL_FAILED_* / 厂商限制翻成中文指引 ──
+export function friendlyInstallError(raw) {
+  const s = String(raw || '');
+  if (/install_switch_flag|disabled .*from pm|by system default|not allowed to install|install .*disabled/i.test(s))
+    return '这台电视（TCL / 雷鸟 / 海信等厂商机型）默认禁止安装第三方应用。请先到电视「设置 → 安全 / 未知来源 / 允许安装第三方应用」里打开再装；也可在下方「ADB 终端」执行 settings put global install_switch_flag 1 试试。';
+  if (/INSTALL_FAILED_NO_MATCHING_ABIS|res=-113/i.test(s))
+    return '这个应用的 CPU 架构和盒子不匹配（例如给 32 位盒子装了 64 位包），换对应版本再装。';
+  if (/INSTALL_FAILED_INSUFFICIENT_STORAGE/i.test(s))
+    return '盒子存储空间不足，先清理一些应用或文件再装。';
+  if (/INSTALL_FAILED_UPDATE_INCOMPATIBLE|signatures do not match/i.test(s))
+    return '已装过同名应用但签名不一致，需要先在盒子上卸载旧版本再装。';
+  if (/INSTALL_FAILED_OLDER_SDK|minSdkVersion/i.test(s))
+    return '这个应用要求的安卓版本比盒子当前系统更高，装不了。';
+  if (/INSTALL_FAILED_ABORTED|user rejected|aborted/i.test(s))
+    return '安装被取消了（盒子上的确认弹窗被拒绝或超时）。';
+  return s;
+}
+
 // ── 安装：APK/XAPK/APKM/APKS，split + obb，流式（APK 不落地，pm install-create/write/commit）──
 export async function installFile(file, onProgress) {
   const { apks, obbs } = await parsePackage(file);
@@ -347,14 +374,14 @@ export async function installFile(file, onProgress) {
 
   const create = await shell('pm install-create -r');
   const m = create.match(/\[(\d+)\]/);
-  if (!m) throw new Error('创建安装会话失败：' + create.trim());
+  if (!m) throw new Error(friendlyInstallError('创建安装会话失败：' + create.trim()));
   const sid = m[1];
 
   try {
     for (const p of apks) {
       const res = await shellWriteBytes(`pm install-write -S ${p.bytes.length} ${sid} ${p.name}`, p.bytes);
       tick(p.bytes.length);
-      if (fail(res)) throw new Error('写入 ' + p.name + ' 失败：' + res.trim());
+      if (fail(res)) throw new Error(friendlyInstallError('写入 ' + p.name + ' 失败：' + res.trim()));
     }
     for (const o of obbs) {
       if (!o.pkg) continue;
@@ -364,7 +391,7 @@ export async function installFile(file, onProgress) {
       tick(o.bytes.length);
     }
     const commit = await shell(`pm install-commit ${sid}`);
-    if (fail(commit)) throw new Error('提交安装失败：' + commit.trim());
+    if (fail(commit)) throw new Error(friendlyInstallError('提交安装失败：' + commit.trim()));
     onProgress && onProgress(total, total);
     return (file.name || '包') + ' 安装完成';
   } catch (e) {
@@ -380,7 +407,7 @@ async function legacyInstall(apk, tick) {
     await pushBytes(tmp, apk.bytes);
     tick && tick(apk.bytes.length);
     const r = await shell(`pm install -r '${tmp}'`);
-    if (!/Success/i.test(r)) throw new Error('安装失败：' + (r || '').trim());
+    if (!/Success/i.test(r)) throw new Error(friendlyInstallError('安装失败：' + (r || '').trim()));
     return (apk.name || '包') + ' 安装完成';
   } finally {
     try { await shell(`rm -f '${tmp}'`); } catch {}

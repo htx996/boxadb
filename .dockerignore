@@ -1,0 +1,25 @@
+# 上下文只该有源码；webapp/ 是构建期产物，宿主机上可能是陈旧副本
+webapp/
+.git
+.github
+.gitignore
+
+# 桌面分发专属产物（镜像用不到，也能压缩上下文体积）
+*.syso
+*.fpk
+*.zip
+*.tar
+assets/AppIcon.icns
+assets/AppIcon.ico
+assets/AppIcon.png
+assets/make_icon.swift
+assets/make_icon_tv.swift
+INSTALL-windows.txt
+docker-compose.yml
+Dockerfile
+README.md
+LICENSE
+
+# 临时/预览文件
+_preview-*.html
+.DS_Store

@@ -1,0 +1,37 @@
+# ─────────────────────────────────────────────────────────────
+# 离线构建：不拉任何基础镜像，只装已交叉编译好的静态二进制。
+# 境内 Docker Hub 拉不通的环境用这个：
+#
+#   sh scripts/build-prebuilt.sh amd64
+#   docker build -f Dockerfile.offline --build-arg ARCH=amd64 -t boxadb:latest .
+#
+# 与多阶段 Dockerfile 产物等价，只是编译挪到构建之外。
+# ─────────────────────────────────────────────────────────────
+ARG ARCH=amd64
+FROM scratch
+# ARG 在 FROM 之后必须再声明一次，否则下面 COPY 会展开成空文件名（构建直接失败）
+ARG ARCH=amd64
+COPY dist/boxadb-bridge-linux-${ARCH} /boxadb-bridge
+
+LABEL org.opencontainers.image.title="BoxADB" \
+      org.opencontainers.image.description="盒子助手：网页版 ADB 工具箱（电视盒子 / Android TV），网页与桥同源" \
+      org.opencontainers.image.source="https://github.com/wukongdaily/boxadb" \
+      org.opencontainers.image.licenses="MIT"
+
+# 容器必须对外监听（桌面版仍默认 127.0.0.1）
+# 内置 https（8766）：手机需要安全上下文；证书落 /data，挂卷则重启不换
+ENV BRIDGE_HOST=0.0.0.0 \
+    BRIDGE_PORT=8765 \
+    BRIDGE_HTTPS_PORT=8766 \
+    BRIDGE_PRIVATE_ONLY=1 \
+    BRIDGE_STATE_DIR=/data
+
+# dist/data 由 build-prebuilt.sh 预建并放 .keep：Docker 不能 COPY 空目录
+COPY --chown=65534:65534 dist/data /data
+VOLUME /data
+
+EXPOSE 8765 8766
+USER 65534:65534
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD ["/boxadb-bridge", "-healthcheck"]
+ENTRYPOINT ["/boxadb-bridge"]

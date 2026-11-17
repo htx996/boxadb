@@ -30,7 +30,8 @@
         <input id="device-ip" type="text" inputmode="decimal" autocomplete="off"
                placeholder="盒子 IP，如 192.168.66.172" spellcheck="false" />
         <button id="connect-btn" class="btn primary">连接</button>
-        <button id="usb-toggle" type="button" class="btn subtle" title="用 USB 数据线直连（需 Chrome / Edge）">🔌 USB 直连</button>
+        <!-- 默认隐藏：仅 Pages / 桌面版且浏览器支持 WebUSB 时由 app.js 显示 -->
+        <button id="usb-toggle" type="button" class="btn subtle" hidden title="用 USB 数据线直连（需 Chrome / Edge）">🔌 USB 直连</button>
         <span id="status-pill" class="pill off">未连接</span>
       </div>
     </header>
@@ -202,6 +203,42 @@
   <footer class="foot">
     <a class="foot-link" href="https://github.com/wukongdaily/boxadb" target="_blank" rel="noopener">盒子助手 BoxADB 悟空的日常</a>
   </footer>
+
+  <!-- 非加密访问引导弹窗（浏览器禁止 http 页面生成 ADB 密钥）-->
+  <div id="insecure-modal" hidden>
+    <div class="modal-card">
+      <h3>需要换成加密方式打开</h3>
+      <p>你现在是用 <b>http://</b>（不加密）访问的。浏览器有条安全规定：<b>不加密的页面不能生成 ADB 密钥</b>，所以连不上盒子。这跟盒子、网络都没关系，换个地址就能解决。</p>
+
+      <!-- 飞牛版引导：跳飞牛加密主页 -->
+      <div id="insecure-fnos">
+        <button id="insecure-fix" class="btn">🔒 打开飞牛加密主页</button>
+        <p class="modal-url" id="insecure-url"></p>
+        <ol class="modal-steps">
+          <li>新标签打开后，若出现「连接不是私密连接」→ 点 <b>高级</b> → <b>继续访问</b>（只需一次，以后不再提示）。</li>
+          <li>进入飞牛桌面后，<b>重新点开「盒子助手」图标</b>，即可正常连接盒子。</li>
+          <li>当前这个不加密的页面可以直接关掉。</li>
+        </ol>
+        <p class="modal-sub">按钮没反应？手动改地址栏：把 <code>http://</code> 改成 <code>https://</code>、端口 <code>5666</code> 改成 <code>5667</code>（飞牛默认加密端口），回车即可。</p>
+      </div>
+
+      <!-- 自托管（NAS/Docker）引导：改用服务自带的 https 端口 -->
+      <div id="insecure-selfhost" hidden>
+        <p>这个页面由<b>盒子助手服务</b>自己发出（NAS / Docker 形态）。改用加密地址即可解决：</p>
+        <button id="insecure-tls" class="btn" hidden>🔒 用加密方式打开（https）</button>
+        <p class="modal-url" id="insecure-tls-url"></p>
+        <p class="modal-sub">首次会提示「连接不是私密连接」→ 点 <b>高级</b> → <b>继续访问</b>。只需一次，以后一直可用。</p>
+        <ol class="modal-steps">
+          <li>手机 / 平板 / 其他电脑：直接用上面按钮切到 https 就行。</li>
+          <li>电脑上也可用端口转发后访问本机地址（本机地址浏览器天然放行）：
+            <pre class="modal-code">ssh -L 8765:127.0.0.1:8765 你的用户名@NAS的IP</pre>
+            再打开 <code>http://localhost:8765/</code>。</li>
+        </ol>
+      </div>
+
+      <button id="insecure-later" class="btn subtle">先不了，稍后处理</button>
+    </div>
+  </div>
 
   <div id="toasts" class="toasts" aria-live="polite"></div>
 
