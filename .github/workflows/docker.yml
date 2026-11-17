@@ -43,10 +43,6 @@ concurrency:
   group: docker-image
   cancel-in-progress: false
 
-env:
-  # GHCR 要求小写命名空间
-  GHCR_IMAGE: ghcr.io/${{ toLower(github.repository_owner) }}/boxadb
-
 jobs:
   image:
     name: Build & push multi-arch image
@@ -54,6 +50,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # GHCR 只接受小写命名空间；Actions 表达式没有转小写的函数，所以在这里算好
+      # 写进 GITHUB_ENV，后续步骤统一用 $GHCR_IMAGE / $HUB_IMAGE
+      - name: Resolve image names
+        env:
+          OWNER: ${{ github.repository_owner }}
+          HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          echo "GHCR_IMAGE=ghcr.io/$(printf '%s' "$OWNER" | tr 'A-Z' 'a-z')/boxadb" >> "$GITHUB_ENV"
+          echo "HUB_IMAGE=$(printf '%s' "$HUB_USER" | tr 'A-Z' 'a-z')/boxadb" >> "$GITHUB_ENV"
+          echo "GHCR 镜像名：ghcr.io/$(printf '%s' "$OWNER" | tr 'A-Z' 'a-z')/boxadb"
 
       # check-dockerfile.sh 要编译 Go，版本从 go.mod 取
       - name: Set up Go
@@ -121,7 +128,6 @@ jobs:
           VERSION: ${{ inputs.version }}
           PUSH_GHCR: ${{ inputs.push_ghcr }}
           PUSH_HUB: ${{ inputs.push_hub }}
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
           V="${VERSION#v}"
           IMAGES=""
@@ -130,7 +136,7 @@ jobs:
             IMAGES="$GHCR_IMAGE"
           fi
           if [ "$PUSH_HUB" = "true" ]; then
-            IMAGES="$IMAGES $DOCKERHUB_USERNAME/boxadb"
+            IMAGES="$IMAGES $HUB_IMAGE"
           fi
           {
             echo "tags<<TAGS_EOF"
