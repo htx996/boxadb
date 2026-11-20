@@ -7,7 +7,15 @@
 
 ---
 
-## 1. 构建镜像
+## 1. 取得镜像
+
+**拉现成镜像（推荐）**：两个仓库内容完全一致，境内一般只有 Docker Hub 拉得动。
+```bash
+docker pull wukongdaily/boxadb:latest
+# 或：docker pull ghcr.io/wukongdaily/boxadb:latest
+```
+
+改过代码才需要自己构建（下面两种产物都用 `boxadb:latest` 这个本地标签）：
 
 **方式 A（标准多阶段，会在容器里编译）**
 ```bash
@@ -20,7 +28,9 @@ sh scripts/build-prebuilt.sh amd64          # ARM NAS 用 arm64，或两个都�
 docker build -f Dockerfile.offline --build-arg ARCH=amd64 -t boxadb:latest .
 ```
 
-镜像只有一个静态 Go 二进制，约 **6–8 MB**，无 shell、无语言运行时、无第三方依赖。
+镜像里是两个东西：一个静态 Go 桥（连网页一起打包，实测 6 MB，无第三方依赖），加上**配对要用的 Node 运行时**
+（运行基座是 `node:24-alpine`，只跑这一个 Node 子进程）。所以整镜像本地约 **178 MB**——比纯 Go 大一圈，
+换来的是网页里能直接输配对码，不用你在电脑上装 adb。
 
 ## 2. 运行
 
@@ -28,6 +38,8 @@ docker build -f Dockerfile.offline --build-arg ARCH=amd64 -t boxadb:latest .
 docker run -d --name boxadb --restart unless-stopped --network host \
   -v boxadb-data:/data boxadb:latest
 ```
+
+自己构建的才写 `boxadb:latest`；拉现成的请把镜像名换成 `wukongdaily/boxadb:latest`。
 
 或用 `docker-compose.yml`：`docker compose up -d`
 
@@ -49,6 +61,9 @@ docker run -d --name boxadb --restart unless-stopped --network host \
 **只需一次**，之后长期有效（证书有效期约 2 年，SAN 覆盖本机所有网卡地址与主机名）。
 
 填盒子 IP → 连接；首次按盒子提示允许调试。
+
+> 你的电视/盒子**提供「无线调试」**时（并非所有安卓 11+ 机型都有，多数电视只有 USB 调试），端口每次开关都会变。**配对一次**即可把连接端口固定成 5555，
+> 之后重开开关就能连、不用再输码：步骤见 README 的「无线调试配对」。
 
 > 电脑上也可以用端口转发（不想接受证书时）：
 > ```bash
@@ -75,12 +90,21 @@ docker run -d --name boxadb --restart unless-stopped --network host \
 | `BRIDGE_TLS_HOSTS` | 空 | 额外证书 SAN（逗号分隔），例如你有固定域名或第二个 IP |
 | `BRIDGE_BASE_PATH` | 空 | 若挂在子路径反向代理下（如 `/boxadb`）填这里，前端才会把 WS 连对 |
 
+配对相关的一般**不用动**（容器里已给好默认值）：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `BOXADB_PIN_PORT` | `5555` | 配对成功后要把盒子调试端口固定成哪个值 |
+| `BOXADB_PAIR_PORT` / `BOXADB_PAIR_DAEMON` | `8770` / `/app/pair/daemon.js` | 配对子进程的端口与脚本位置；改前要知道自己在干什么 |
+| `BOXADB_NODE_BIN` | `node` | 找不到 Node 时配对能力自动关闭（界面不会出现配对入口），一般只有自建镜像才需要指定 |
+
 ## 6. 安全边界（请照着做）
 
 - **只在局域网内使用，不要把 8765/8766 暴露到公网。** 这个桥的作用是「连接到别的主机」，
   上公网等于给人送内网跳板。
-- 已内置：目标地址私网白名单、静态服务防路径穿越、非 root 用户运行（65534）、私钥 0600、
-  无 shell 的 scratch 镜像、健康检查。
+- 已内置：目标地址私网白名单、静态服务防路径穿越、非 root 用户运行（65534）、私钥 0600、健康检查。
+- 运行基座是 `node:24-alpine`（不再是 scratch），但里面只跑一个 Go 桥和一个配对子进程，
+  不额外装包；配对子进程只监听 `127.0.0.1`（日志里就是 `at http://127.0.0.1:8770`），对外仍只有 8765/8766。
 - **尚未内置访问鉴权**（同一局域网内任何人都能用这个桥）。多人/不可信网络请自行加反代鉴权，
   或只在可信网段开放。
 - 自签证书不是"安全缺陷"，但也不提供真实身份；它只为了满足浏览器的安全上下文要求。
@@ -93,12 +117,17 @@ docker run -d --name boxadb --restart unless-stopped --network host \
 | 飞牛原生版 `boxadb-fnos` | 有飞牛 NAS | 飞牛桌面图标（统一网关，天然 https + 登录鉴权） | 常驻 NAS |
 | **Docker 版（本文）** | 其它品牌 NAS / 软路由 | 服务自己发，同源 + 自带 https | 常驻该设备 |
 
-三者共用同一套前端与同一个 Go 桥，功能一致。飞牛上也能用 Docker 版，但飞牛用户更推荐原生版
-（自带登录鉴权、桌面图标、应用中心升级）。
+三者共用同一套前端与同一个 Go 桥。功能差别只由运行环境决定：
+
+- **「无线调试配对」**需要服务端有 Node：NAS / Docker 版和飞牛原生版有，桌面桥没有（界面上不会出现配对入口）；
+- **USB 数据线直连（WebUSB）**需要浏览器拿到 USB：只有网页版和桌面版有，服务端形态不渲染这个入口。
+
+飞牛上也能用 Docker 版，但飞牛用户更推荐原生版（自带登录鉴权、桌面图标、应用中心升级）。
 
 ## 8. 卸载
 
 ```bash
-docker rm -f boxadb && docker volume rm boxadb-data && docker rmi boxadb:latest
+docker rm -f boxadb && docker volume rm boxadb-data
+docker rmi wukongdaily/boxadb:latest    # 自建的话是 boxadb:latest
 ```
-桥不写任何持久数据（只有那张自签证书），删容器和卷即彻底干净。
+桥只写两样持久数据：那张自签证书和**配对凭据**（都在 `/data` 卷里）。删掉卷就等于每台设备都要重新配一次对。
