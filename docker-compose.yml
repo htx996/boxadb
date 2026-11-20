@@ -2,7 +2,8 @@
 # 群晖 / 威联通 / 极空间 / unRAID 等均可
 services:
   boxadb:
-    image: boxadb:latest
+    # 拉现成镜像；GHCR 同名 ghcr.io/wukongdaily/boxadb。自建就换 image: boxadb:latest 并加 build: .
+    image: wukongdaily/boxadb:latest
     container_name: boxadb
     restart: unless-stopped
 
