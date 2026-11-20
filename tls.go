@@ -288,23 +288,92 @@ func redirectTarget(r *http.Request, host string) string {
 }
 
 // 日志里提示的访问地址：优先取非回环 IPv4
+// 容器/NAS 上常有 docker0、br-* 这些 172.16/12 地址，把它们排到最后，
+// 否则日志会建议一个用户根本打不开的地址。
+func lanRank(v4 net.IP) int {
+	oct := v4[0]
+	switch {
+	case v4.IsLoopback() || v4.IsLinkLocalUnicast():
+		return 9
+	case oct == 192 && v4[1] == 168:
+		return 0 // 家庭/办公局域网最常见
+	case oct == 10:
+		return 1
+	case oct == 172 && v4[1] >= 16 && v4[1] <= 31:
+		return 3 // Docker / 网桥段
+	case v4.IsPrivate():
+		return 2
+	default:
+		return 8
+	}
+}
+
+// 虚拟网卡（vmnet/veth/br-/docker/utun…）排后，避免建议一个用户打不开的地址
+func ifaceNameRank(name string) int {
+	n := strings.ToLower(name)
+	for _, bad := range []string{"vmnet", "veth", "br-", "br", "docker", "virbr", "tun", "tap", "utun", "awdl", "llw", "bridge", "wg", "cni", "flannel", "kube", "lo"} {
+		if strings.HasPrefix(n, bad) {
+			return 1
+		}
+	}
+	return 0
+}
+
+func lanHintIP() net.IP {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var best net.IP
+	bestScore := 1 << 30
+	for _, ifc := range ifaces {
+		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipn, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			v4 := ipn.IP.To4()
+			if v4 == nil {
+				continue
+			}
+			if score := lanRank(v4)*4 + ifaceNameRank(ifc.Name); score < bestScore {
+				bestScore, best = score, v4
+			}
+		}
+	}
+	return best
+}
+
 func httpsURLHint() string {
 	p := httpsPort()
 	if p == "" {
 		return ""
 	}
+	if ip := lanHintIP(); ip != nil {
+		return "https://" + net.JoinHostPort(ip.String(), p) + "/"
+	}
 	ips, _ := discoverHosts()
+	best, bestRank := net.IP(nil), 10
 	for _, ip := range ips {
-		if v4 := ip.To4(); v4 != nil && !v4.IsLoopback() && !v4.IsLinkLocalUnicast() {
-			return "https://" + net.JoinHostPort(v4.String(), p) + "/"
+		v4 := ip.To4()
+		if v4 == nil {
+			continue
+		}
+		if r := lanRank(v4); r < bestRank {
+			best, bestRank = v4, r
 		}
 	}
-	for _, ip := range ips {
-		if v4 := ip.To4(); v4 != nil && !v4.IsLoopback() {
-			return "https://" + net.JoinHostPort(v4.String(), p) + "/"
-		}
+	if best == nil || bestRank >= 9 {
+		return "https://<本机IP>:" + p + "/"
 	}
-	return "https://<本机IP>:" + p + "/"
+	return "https://" + net.JoinHostPort(best.String(), p) + "/"
 }
 
 func serveHTTPS(Handler http.Handler, stop <-chan struct{}) {

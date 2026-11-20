@@ -48,6 +48,20 @@ for src in $COPIES; do
 done
 [ "$missing" = 0 ] || { echo "check-dockerfile: 上下文缺文件" >&2; exit 1; }
 
+# 反向校验：只查「COPY 引用的文件存在」挡不住漏写 COPY —— 少一行 COPY，
+# 上下文照样自洽，要到镜像跑起来才暴露（pair 少一行 = 无线调试整体失效）。
+echo "=== 反向校验：仓库里必须进镜像的都在这份清单里 ==="
+rc=0
+for f in *.go; do
+  case "$f" in *_test.go) continue ;; esac
+  printf '%s\n' "$COPIES" | grep -qx "$f" || { echo "  ✗ $f 未出现在 COPY 清单"; rc=1; }
+done
+for d in pair js css assets scripts; do
+  printf '%s\n' "$COPIES" | grep -qx "$d" || printf '%s\n' "$COPIES" | grep -q "^$d/" || { echo "  ✗ $d 未被 COPY"; rc=1; }
+done
+[ "$rc" = 0 ] || { echo "check-dockerfile: COPY 清单不完整（上面列出的是缺项）" >&2; exit 1; }
+echo "  ✓ 源文件与目录无遗漏"
+
 # 构建标签也从 Dockerfile 取，避免校验与真实构建脱节
 TAGS=$(grep -o '\-tags [a-zA-Z0-9_]*' "$DF" | head -1 | awk '{print $2}')
 TAGS_ARG=""

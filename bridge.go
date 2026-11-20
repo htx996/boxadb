@@ -254,8 +254,15 @@ func allowCross(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Private-Network", "true")
 }
 
+var sidecar *pairSidecar
+
 func router(w http.ResponseWriter, r *http.Request) {
 	allowCross(w)
+	// 配对三接口只在容器形态（镜像带 Node sidecar）存在；桌面版直接落到后面的 404
+	if sidecar != nil && (r.URL.Path == "/pair" || r.URL.Path == "/recover" || r.URL.Path == "/discover") {
+		sidecar.handle(w, r)
+		return
+	}
 	// http 侧把非本机地址的页面请求跳到内置 https（安全上下文，手机才能用）
 	if r.TLS == nil {
 		if h := httpsRedirectHost(r); h != "" {
@@ -339,6 +346,10 @@ func main() {
 		os.Exit(healthCheck())
 	}
 	addr := net.JoinHostPort(listenHost(), listenPort())
+	sidecar = startPairSidecar()
+	if sidecar != nil {
+		defer sidecar.stop()
+	}
 
 	// 幂等保护：已有一个桥在监听时直接退出（重复双击图标无害）
 	if c, err := net.DialTimeout("tcp", addr, 300*time.Millisecond); err == nil {

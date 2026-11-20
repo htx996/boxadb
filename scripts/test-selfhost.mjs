@@ -26,6 +26,17 @@ const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'boxadb-tls-'));
 let pass = 0, fail = 0;
 const ok = (c, m) => { c ? (pass++, console.log('  ✅ ' + m)) : (fail++, console.log('  ❌ ' + m)); };
 
+const __dirnameOf = () => path.dirname(new URL(import.meta.url).pathname);
+// 读仓库内文件：兼容从仓库根或 scripts/ 目录起跑
+const rd = (rel) => fs.readFileSync([rel, '../' + rel].map((f) => path.resolve(process.cwd(), f)).find((f) => fs.existsSync(f)), 'utf8');
+const postJSON = (port, p, obj) => new Promise((res) => {
+  const body = JSON.stringify(obj);
+  const rq = http.request({ host: '127.0.0.1', port, path: p, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, (rs) => {
+    let b = ''; rs.on('data', (c) => (b += c)); rs.on('end', () => res({ code: rs.statusCode, body: b }));
+  });
+  rq.on('error', () => res({ code: 0, body: '' }));
+  rq.write(body); rq.end();
+});
 const get = (port, path, headers = {}) => new Promise((res, rej) => {
   const req = http.request({ port, path, headers }, (r) => {
     let b = ''; r.on('data', (d) => b += d); r.on('end', () => res({ status: r.statusCode, headers: r.headers, body: b }));
@@ -323,7 +334,7 @@ try {
   ok(/id="diag"[^>]*\shidden/.test(sPort.body), '诊断面板默认 hidden（正常用户看不到任何分类信息）');
   ok(sU.body.includes("location.search.includes('diag=1')"), '诊断面板只在 ?diag=1 时出现');
   ok(sT.body.includes("export function getDiag") && /diag\.kind = 'C-/.test(sT.body), 'tango.js 按 A/B/C/D/E 分类记录失败原因');
-  ok(sT.body.includes("r('stall'), 8000") && sU.body.includes('onStall:'), '端口 8 秒无响应就明确告知是 TLS 配对端口（不让用户干等 30 秒）');
+  ok(sT.body.includes("r('stall'), stallMs") && sU.body.includes('onStall'), '端口短时无响应就给出分类，不让用户干等 30 秒');
   ok(/id="port-stall"[^>]*\shidden/.test(sPort.body), '弹窗里的“无响应”说明默认不显示，只在超时时出现');
 
   const dDocker = runDialog({ selfHosted: true, metas: { 'boxadb-mode': 'selfhosted', 'boxadb-prefix': '', 'boxadb-tls-port': '8766' } });
@@ -343,7 +354,6 @@ try {
   // ── 无线调试配对入口（前端只做表单与形态门控，协议在桥里）──
   console.log('\n[无线调试 · 前端接线]');
   {
-    const rd = (rel) => fs.readFileSync([rel, '../' + rel].map((f) => path.resolve(process.cwd(), f)).find((f) => fs.existsSync(f)), 'utf8');
     const html = rd('index.html'), app = rd('js/app.js'), tg = rd('js/tango.js');
     const iConn = html.indexOf('id="port-input"'), iPair = html.indexOf('id="pair-port-input"');
     ok(iConn > 0 && iPair > iConn, '表单顺序：① 连接端口在 ② 配对端口之前');
@@ -358,7 +368,7 @@ try {
         ok(/>自动填端口</.test(html) && !html.includes('自动查端口'), '按钮文案为「自动填端口」，旧名已消失');
         ok(html.includes('没查到无线调试广播') || app.includes('没查到无线调试广播'), '查不到时说清楚，不假装成功');
       {
-        const css = fs.readFileSync(rd('css/style.css'), 'utf8');
+        const css = rd('css/style.css');
         const zToast = +(css.match(/\.toasts\{[^}]*z-index:\s*(\d+)/) || [])[1];
         const zModal = +(css.match(/#insecure-modal,#port-modal\{[^}]*z-index:\s*(\d+)/) || [])[1];
         ok(zToast > zModal, `dialog 出现时右下角提示仍可见（toasts ${zToast} > modal ${zModal}）`);
@@ -373,8 +383,8 @@ try {
       ok((app.match(/await autoRecover\(ip\)/g) || []).length === 1,
         '只在点「连接」时才探测自愈，页面加载不探测');
         ok(app.includes('authTimeoutMs: 90000'), '配对后首连给足 90 秒等人点允许，不再 8 秒判死');
-      ok(app.includes("left % 2 !== 0 || busy") && app.includes('recoverWireless(ip, true)'),
-        '等待时改为每 2 秒一轮，且上一轮没回来不叠加新轮');
+      ok(app.includes('setTimeout(r, 2000)') && app.includes('if (!busy)') && app.includes('recoverWireless(ip, true)'),
+        '等待时 2 秒一轮，且上一轮没回来不叠加新轮');
         ok(/还在等电视|我点过允许了，再连一次/.test(app), '超时话术改成「点完再连」，不是「没成功」');
         ok(tg.includes('inbound') && tg.includes('stream.inbound() > 0'), 'tango 用入向字节判定：有来文就不是 TLS 端口');
       }
@@ -386,10 +396,34 @@ try {
       '先静默用已存凭据自愈，失败才弹表单');
     ok(app.includes('pg.hidden = !canPair') && app.includes('const canPair = await pairAvailable()'),
       '配对区按「桥的能力」显示，不是按形态常量瞎猜（Docker 的 Go 桥没这三接口 → 不出入口）');
-    ok(tg.includes('wirelessAvailable') && tg.includes("discoverWireless().then(() => true).catch(() => false)"),
-      'tango 用一次 /discover 探测桥是否支持配对');
+    ok(tg.includes('wirelessAvailable') && tg.includes('Array.isArray(d.connect)'),
+      'tango 探测要求「响应像发现结果」才算支持：200+HTML 的 SPA 兜底骗不出死控件');
+    {
+      // 真跑一遍判定：四种桥各给什么结论（Pages / Go 桥 404 / SPA 兜底 200 / 真实现）
+      const i2 = tg.indexOf('export function wirelessAvailable');
+      const srcW = 'let wirelessProbe = null;\n' + tg.slice(i2, tg.indexOf('\n}', i2) + 2).replace('export function', 'function');
+      const runW = async (selfHosted, impl) => {
+        const mk = new Function('selfHosted', 'discoverWireless', srcW + '\nreturn wirelessAvailable;');
+        return await mk(selfHosted, impl)();
+      };
+      ok(await runW(false, async () => ({ connect: [] })) === false, 'Pages/桌面形态：不探测也不开放');
+      ok(await runW(true, async () => { throw new Error('HTTP 404'); }) === false,
+        'Docker 的 Go 桥没这三个接口 → 判定不支持（用户看不到配对区与倒计时）');
+      ok(await runW(true, async () => ({})) === false, '桥若加了 SPA 兜底（200+HTML）也不会误开');
+      {
+        const apiSrc = rd('pair/api.js');
+        ok(apiSrc.includes("need: 'manual-port'") && apiSrc.includes('容器网络隔离查不到'),
+          '查不到广播时落点是 manual-port：容器网络隔离不被误判成"没配过对"');
+        ok(!/if \(noService\) return \{ ok: false, need: 'pair'/.test(apiSrc),
+          '不再把"查不到广播"直接判成需要配对');
+      }
+      ok(await runW(true, async () => ({ connect: [], pairing: [] })) === true, '桥真实现了才放开入口');
+    }
     ok(app.includes('if (!(await pairAvailable())) return false'), '不支持配对的桥不会白跑一次 recover');
-    ok(app.includes('T.pairWireless(') && app.includes('T.discoverWireless()') && app.includes('T.recoverWireless(ip)'),
+    ok(app.includes("canPair ? '这个端口不接受明文连接，需要配对' : '这个端口只接受加密连接'")
+       && app.includes('还不能配对'),
+      '桥不支持配对时，dialog 不再只说「需要配对」把用户逼进死路，而给出可执行替代');
+    ok(app.includes('.pairWireless(') && app.includes('.discoverWireless(') && app.includes('.recoverWireless('),
       '三个接口都接上了');
     ok(/\^\\d\{6\}\$/.test(app), '提交前校验 6 位配对码');
     ok(tg.includes('export const wirelessSupported = selfHosted'), 'tango 明确：只有自托管支持配对');
@@ -439,6 +473,136 @@ try {
     ctl.close();
     ok(els['#pair-countdown'].hidden === true && cleared > 0, '结束后遮罩收起且心跳停止');
   }
+
+  // ── 无线配对 sidecar：容器有 Node 才有这三个接口，桌面版必须 404（否则前端给出死按钮）──
+  console.log('\n[配对 sidecar 能力门控]');
+  {
+    const files = ['pair/daemon.js', 'pair/api.js', 'pair/index.js', 'pair/mdns.js', 'pair/keystore.js'];
+    for (const f of files) {
+      const abs = path.resolve(process.cwd(), f);
+      ok(fs.existsSync(abs), `真源在共享仓：${f} 存在`);
+    }
+    const go = fs.readFileSync(path.resolve(process.cwd(), 'bridge.go'), 'utf8');
+    const py = fs.readFileSync(path.resolve(process.cwd(), 'pairproxy.go'), 'utf8');
+    ok(go.includes('sidecar != nil && (r.URL.Path == \"/pair\"'), 'Go 路由只在 sidecar 存在时接管三接口');
+    ok(py.includes('exec.LookPath(node)') && py.includes('os.Stat(script)'), 'Node 或 daemon 缺失 → 能力关闭而非报错');
+    ok(!py.includes('http.Client{Timeout: 0'), '转发有硬超时，不会挂住');
+
+    // 块内专用 HTTP 助手，避免与外层同名符号相互干扰
+    const req1 = (port, p, method = 'GET', payload) => new Promise((res) => {
+      const body = payload ? JSON.stringify(payload) : null;
+      const rq = http.request({ host: '127.0.0.1', port, path: p, method, headers: body ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } : {} },
+        (rs) => { let b = ''; rs.on('data', (c) => (b += c)); rs.on('end', () => res({ code: rs.statusCode, body: b })); });
+      rq.on('error', (e) => res({ code: 'ERR:' + e.code, body: '' }));
+      if (body) rq.write(body);
+      rq.end();
+    });
+    // 桌面实例（未设 sidecar 环境变量）：三接口必须 404
+    for (const p of ['/discover', '/pair', '/recover']) {
+      const r = await req1(P_DESKTOP, p, p === '/pair' || p === '/recover' ? 'POST' : 'GET', p === '/discover' ? null : { host: '192.168.66.122', pairPort: 40217, code: '123456' });
+      ok(r.code === 404, `桌面版 ${p} → 404（前端据此隐藏配对入口，不给死按钮）[实测 ${r.code}]`);
+    }
+
+    // 再起一个带 sidecar 的实例，模拟容器形态
+    const base = 20000 + (process.pid % 4000);
+    const pairPort = base, apiPort = base + 1;
+    const child = spawn(SERVER, [], {
+      env: Object.assign({}, process.env, {
+        BRIDGE_HOST: '127.0.0.1', BRIDGE_PORT: String(apiPort), BRIDGE_HTTPS_PORT: '0',
+        BRIDGE_STATE_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'boxadb-pair-')),
+        BOXADB_PAIR_PORT: String(pairPort),
+        BOXADB_PAIR_DAEMON: path.join(__dirnameOf(), '..', 'pair', 'daemon.js'),
+        NODE_NO_WARNINGS: '1',
+      }), stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    procs.push(child);
+    await new Promise((r) => setTimeout(r, 2500));
+    const d = await req1(apiPort, '/discover');
+    // 反代必须保留 query：丢了 ?host= 的话，「能不能发现」会退化成恒真，按钮该藏也不藏
+    const q1 = await req1(apiPort, '/discover?host=203.0.113.9');
+    ok(/"discoverable":false/.test(q1.body), `反代保留 query：异网段目标判为不可发现 [${String(q1.body).slice(0, 24)}]`);
+    // 用本机真实网段的另一个地址来验证「同段=可发现」（回环属 internal，本来就不算可发现）
+    // 同网段判据：取本机任一非内部网口的 /24，造一个同段地址（/16 也必然落在同段内）
+    const lan = (() => {
+      for (const addrs of Object.values(os.networkInterfaces())) {
+        for (const a of addrs || []) if (a.family === 'IPv4' && !a.internal) return a.address.split('.').slice(0, 3).join('.') + '.9';
+      }
+      return null;
+    })();
+    if (lan) {
+      const q2 = await req1(apiPort, '/discover?host=' + encodeURIComponent(lan));
+      ok(/"discoverable":true/.test(q2.body), `同网段目标（${lan}）判为可发现，按钮不会被误藏`);
+    } else {
+      ok(false, '本机无非内部 IPv4 网口，无法验证同网段判据');
+    }
+    {
+      const px = rd('pairproxy.go'), dj = rd('pair/daemon.js');
+      ok(px.includes('BOXADB_PAIR_NONCE=') && px.includes('waitReady') && px.includes('判定为陈旧进程'),
+        '桥会验明 sidecar 身份：端口上残留的旧进程不会被误当成本次能力');
+      ok(px.includes('cmd.Stdin = pr') && dj.includes("process.stdin.on('end'"),
+        '桥被强杀时 sidecar 靠 stdin EOF 自退，不留孤儿进程');
+    }
+    ok(d.code === 200 && /"connect":\[/.test(d.body), `容器形态 /discover 经 Go 转发到 sidecar → ${d.code} ${String(d.body).slice(0, 40)}`);
+    const badc = await req1(apiPort, '/pair', 'POST', { host: '192.168.66.122', pairPort: 40217, code: '12' });
+    ok(badc.code === 400 && /6 位数字/.test(badc.body), '校验在共享模块里，两个宿主话术一致');
+    const badh = await req1(apiPort, '/pair', 'POST', { host: '8.8.8.8', pairPort: 1, code: '123456' });
+    ok(badh.code === 400 && /bad-host/.test(badh.body), '公网目标一律拒绝（sidecar 也守同一条线）');
+  }
+
+
+  // ── 自动填端口按钮：只在「本机确实能发现该网段广播」时出现 ──
+  console.log('\n[自动填端口 · 环境自适应]');
+  {
+    const srcApp = rd('js/app.js');
+    const i0 = srcApp.indexOf('async function showPortDialog(');
+    let dep = 0, i1 = -1;
+    for (let k = srcApp.indexOf('{', i0); k < srcApp.length; k++) { if (srcApp[k] === '{') dep++; else if (srcApp[k] === '}' && --dep === 0) { i1 = k; break; } }
+    ok(i0 > 0 && i1 > i0, '能取出 showPortDialog 全体');
+    const body = srcApp.slice(i0, i1 + 1);
+    const AF = Object.getPrototypeOf(async function () {}).constructor;
+    const runDialog = async (canPair, disc) => {
+      const els = {};
+      const mk = () => ({ hidden: true, value: '', textContent: '', innerHTML: '', onclick: null, focus() {}, scrollIntoView() {} });
+      for (const k of ['#port-modal', '#port-title', '#port-desc', '#port-input', '#port-modal-ip', '#port-ok', '#port-cancel',
+        '#pair-port-input', '#pair-code-input', '#pair-group', '#port-detect', '#pair-note', '#port-stall', '#pair-allow']) els[k] = mk();
+      const $d = (x) => els[x];
+      const outer = new AF('$', 'toast', 'pairAvailable', 'tango', 'state', 'lastRecover', body + ';return showPortDialog;');
+      const fn = await outer($d, () => {}, async () => canPair, async () => ({ discoverWireless: async () => disc }), { ip: '192.168.66.122', prefs: {} }, null);
+      await fn('192.168.66.122', 'NEED_PORT');
+      return els;
+    };
+    const e1 = await runDialog(true, { discoverable: true, connect: [], pairing: [], lastPort: null });
+    ok(e1['#port-detect'].hidden === false, '能发现广播（NAS / host 网络）→ 显示「自动填端口」');
+    const e2 = await runDialog(true, { discoverable: false, lastPort: 42535, connect: [], pairing: [] });
+    ok(e2['#port-detect'].hidden === true, '发现不了（网络隔离）→ 隐藏按钮，不让人白点');
+    ok(e2['#port-input'].value === '42535', '发现不了时 → 预填上次用过的连接端口');
+    const e3 = await runDialog(false, null);
+    ok(e3['#port-detect'].hidden === true && e3['#pair-group'].hidden === true, '桥不支持配对 → 按钮与配对区都不出现');
+    ok(rd('js/tango.js').includes("api('/discover' + (host ? '?host='"), 'discover 带 host 参数（判据需要目标网段）');
+  }
+
+
+  // ── 日志提示的 https 地址必须是用户真能打开的那个 ──
+  console.log('\n[启动提示地址选择]');
+  {
+    const tlsSrc = rd('tls.go');
+    ok(tlsSrc.includes('func lanRank') && tlsSrc.includes('func ifaceNameRank'), '按网段 + 网卡名双重排序（Docker/虚拟网卡排后）');
+    const hintLine = spawned.map((r) => (r.out || '').split('\n').find((l) => l.includes('手机/其他设备请用'))).find(Boolean);
+    const hintIP = hintLine ? (hintLine.match(/https:\/\/([^:/]+):/) || [])[1] : null;
+    // 按「网卡名是否虚拟」判定，而不是靠网段猜：链路本地(169.254)、docker0、
+    // bridge100、vmnet 都可能与真实 LAN 同前缀，猜网段必然随接口顺序漂。
+    const real = [];
+    for (const [dev, addrs] of Object.entries(os.networkInterfaces())) {
+      if (/^(br-|bridge|veth|docker|vmnet|utun|awdl|llw|tun|tap|lo|gif|stf)/i.test(dev)) continue;
+      for (const a of addrs || []) {
+        if (a.family === 'IPv4' && !a.internal && !a.address.startsWith('169.254.')) real.push([dev, a.address]);
+      }
+    }
+    const hit = real.find(([, ip]) => ip === hintIP);
+    if (real.length) ok(!!hit, `提示的 ${hintIP || '(无地址)'} 落在真实物理网卡上（候选 ${real.map(([d, i]) => d + '=' + i).join(', ')}）`);
+    else ok(false, '本机没有可判定的物理网卡地址，用例无法成立');
+  }
+
   console.log(`\n结果: ${pass} 通过 / ${fail} 失败`);
 } catch (e) {
   console.log('测试异常：' + e.message);
