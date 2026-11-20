@@ -317,7 +317,9 @@ try {
   const sT = await get(P_SERVER, '/js/tango.js');
   ok(sT.body.includes('export async function enableTcpip'), 'tango.js 提供 enableTcpip（走 ADB 通道切端口）');
   ok(!sT.body.includes('请先完成 adb tcpip 5555'), '不再让用户去电脑上敲 adb（旧文案已清除）');
-  ok(sU.body.includes('必须用无线调试配对，目前还不支持'), '填了端口仍连不上时，直接说明是配对类设备（不再重复提 5555）');
+  ok(!sU.body.includes('目前还不支持'), '不再出现「不支持配对」这种过期文案（现在能配对了）');
+  ok((sU.body.includes("err.code==='code'") || sU.body.includes("err.code === 'code'")) && sU.body.includes('配对码不对或已过期'),
+    '配对失败按落点给话：配对码不对/已过期');
   ok(/id="diag"[^>]*\shidden/.test(sPort.body), '诊断面板默认 hidden（正常用户看不到任何分类信息）');
   ok(sU.body.includes("location.search.includes('diag=1')"), '诊断面板只在 ?diag=1 时出现');
   ok(sT.body.includes("export function getDiag") && /diag\.kind = 'C-/.test(sT.body), 'tango.js 按 A/B/C/D/E 分类记录失败原因');
@@ -362,7 +364,17 @@ try {
         ok(zToast > zModal, `dialog 出现时右下角提示仍可见（toasts ${zToast} > modal ${zModal}）`);
         ok(html.includes('id="pair-allow"'), '弹窗里有「等电视点允许」的显式状态块');
         ok(app.includes("why === 'await-allow'"), 'stall 分成「等允许」与「疑似 TLS」两类');
+      ok(app.includes("r.need === 'enable-wireless'") && app.includes('waitWirelessOn('),
+        '配过对的盒子重启后：只提示开无线调试开关并自动等，不弹配对 dialog');
+      ok(!html.includes('pair-wait') && !css.includes('.pair-wait'),
+        '不再有顶部提示条：提示统一走右下角 toast（保持既有交互一致）');
+      ok(css.includes('[hidden]{display:none!important}'),
+        '全局 [hidden] 规则：自定义 display 不会把 hidden 元素变成一加载就显示');
+      ok((app.match(/await autoRecover\(ip\)/g) || []).length === 1,
+        '只在点「连接」时才探测自愈，页面加载不探测');
         ok(app.includes('authTimeoutMs: 90000'), '配对后首连给足 90 秒等人点允许，不再 8 秒判死');
+      ok(app.includes("left % 2 !== 0 || busy") && app.includes('recoverWireless(ip, true)'),
+        '等待时改为每 2 秒一轮，且上一轮没回来不叠加新轮');
         ok(/还在等电视|我点过允许了，再连一次/.test(app), '超时话术改成「点完再连」，不是「没成功」');
         ok(tg.includes('inbound') && tg.includes('stream.inbound() > 0'), 'tango 用入向字节判定：有来文就不是 TLS 端口');
       }
@@ -387,6 +399,46 @@ try {
     ok(kinds.every(k => app.includes('err.code===' + k) || app.includes('err.code === ' + k)), '失败分类文案覆盖五种落点');
   }
 
+
+  // ── 全屏等待倒计时（假 DOM 真跑一遍）──
+  console.log('\n[等待提示 · 全屏倒计时]');
+  {
+    const htmlC = rd('index.html');
+    ok(/id="pair-countdown"[^>]*\shidden/.test(htmlC), '倒计时遮罩默认 hidden');
+    ok(htmlC.includes('id="cd-num"') && htmlC.includes('id="cd-bar"') && htmlC.includes('id="cd-cancel"'), '大数字、圆环、取消按钮都在结构里');
+    ok(htmlC.includes('id="cd-text-a"') && htmlC.includes('id="cd-text-b"'), '文案拆成两行（引导行 + 重点行）');
+    ok(!/class="cd-text"[^>]*>请在电视\/盒子上打开「无线调试」开关</.test(htmlC), '不再把一长句塞进大字行');
+    const cssC = rd('css/style.css');
+    const zCd = +(cssC.match(/\.cd-mask\{[^}]*z-index:\s*(\d+)/) || [])[1];
+    const zModal = +(cssC.match(/#insecure-modal,#port-modal\{[^}]*z-index:\s*(\d+)/) || [])[1];
+    ok(zCd > zModal, `倒计时盖在 dialog 之上（${zCd} > ${zModal}）`);
+    ok(cssC.includes('.cd-dial{position:relative') && cssC.includes('.cd-num{position:absolute'), '秒数定位在圆环中心（有定位父级，不会飘走）');
+
+    const srcFn = extractFn(rd('js/app.js'), 'showCountdown');
+    ok(srcFn.length > 0, '能取出 showCountdown 实现');
+    const mk = () => ({ hidden: true, textContent: '', style: {}, onclick: null });
+    const els = { '#pair-countdown': mk(), '#cd-text-a': mk(), '#cd-text-b': mk(), '#cd-num': mk(), '#cd-bar': mk(), '#cd-cancel': mk() };
+    const $ = (sel) => els[sel];
+    let beat = null, cleared = 0;
+    const f = new Function('$', 'CD_LEN', 'setInterval', 'clearInterval',
+      srcFn + '\nreturn showCountdown;')($, 339.29, (fn) => { beat = fn; return 1; }, () => { cleared++; });
+    let cancelled = false;
+    const ctl = f(90, null, () => { cancelled = true; });
+    ok(els['#pair-countdown'].hidden === false, '调用后遮罩显示');
+    ok(els['#cd-num'].textContent === '90' && els['#cd-text-a'].textContent === '请在电视上打开' && els['#cd-text-b'].textContent === '「无线调试」开关',
+      '初始秒数就位，文案是「引导行 + 重点行」两行');
+    ok(typeof beat === 'function', '遮罩自己注册 1 秒心跳（不靠外部喂 tick）');
+    beat(); beat(); beat();
+    ok(els['#cd-num'].textContent === '87', '心跳独立走表：三次后 90 → 87，探测再慢也不定格');
+    ok(Math.abs(+els['#cd-bar'].style.strokeDashoffset - 339.29 * (1 - 87 / 90)) < 0.01, '圆环与秒数同步消退');
+    const appSrc2 = rd('js/app.js');
+    ok(!appSrc2.includes('ctl.tick('), '等待循环不再驱动秒数：显示与探测已解耦');
+    ok(appSrc2.includes('setTimeout(r, 2000)') && appSrc2.includes('if (!busy)'), '探测节奏 2 秒且有在途保护');
+    els['#cd-cancel'].onclick();
+    ok(cancelled === true, '取消按钮有出口，不会把人锁在屏幕上');
+    ctl.close();
+    ok(els['#pair-countdown'].hidden === true && cleared > 0, '结束后遮罩收起且心跳停止');
+  }
   console.log(`\n结果: ${pass} 通过 / ${fail} 失败`);
 } catch (e) {
   console.log('测试异常：' + e.message);
