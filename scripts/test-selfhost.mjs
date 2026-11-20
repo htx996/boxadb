@@ -310,6 +310,20 @@ try {
     fn();
     return els;
   };
+  // 「设备没在 5555 上监听」这条分支：必须只在失败时才要端口，且不再把用户推去电脑上敲 adb
+  const sPort = await get(P_SERVER, '/index.html');
+  ok(/id="port-modal"[^>]*\shidden/.test(sPort.body), '端口对话框默认 hidden（平时界面里看不到端口输入）');
+  ok(sU.body.includes("err.code === 'NEED_PORT' || err.code === 'BRIDGE_UNREACHABLE'") && sU.body.includes('showPortDialog(ip, err.code)'), 'A（端口无反应）与 C（拒绝明文）都会给出填端口的机会');
+  const sT = await get(P_SERVER, '/js/tango.js');
+  ok(sT.body.includes('export async function enableTcpip'), 'tango.js 提供 enableTcpip（走 ADB 通道切端口）');
+  ok(!sT.body.includes('请先完成 adb tcpip 5555'), '不再让用户去电脑上敲 adb（旧文案已清除）');
+  ok(sU.body.includes('必须用无线调试配对，目前还不支持'), '填了端口仍连不上时，直接说明是配对类设备（不再重复提 5555）');
+  ok(/id="diag"[^>]*\shidden/.test(sPort.body), '诊断面板默认 hidden（正常用户看不到任何分类信息）');
+  ok(sU.body.includes("location.search.includes('diag=1')"), '诊断面板只在 ?diag=1 时出现');
+  ok(sT.body.includes("export function getDiag") && /diag\.kind = 'C-/.test(sT.body), 'tango.js 按 A/B/C/D/E 分类记录失败原因');
+  ok(sT.body.includes("r('stall'), 8000") && sU.body.includes('onStall:'), '端口 8 秒无响应就明确告知是 TLS 配对端口（不让用户干等 30 秒）');
+  ok(/id="port-stall"[^>]*\shidden/.test(sPort.body), '弹窗里的“无响应”说明默认不显示，只在超时时出现');
+
   const dDocker = runDialog({ selfHosted: true, metas: { 'boxadb-mode': 'selfhosted', 'boxadb-prefix': '', 'boxadb-tls-port': '8766' } });
   ok(dDocker['#insecure-selfhost'].hidden === false && dDocker['#insecure-fnos'].hidden === true,
     'Docker/NAS 容器（有 boxadb-tls-port）→ 只显示自托管 https 引导');
@@ -323,6 +337,55 @@ try {
   const dPages = runDialog({ selfHosted: false, metas: {} });
   ok(dPages['#insecure-fnos'].hidden === true && dPages['#insecure-selfhost'].hidden === true && dPages['#insecure-tls'].hidden === true,
     '桌面/Pages 形态不会误显示任一套 NAS 引导');
+
+  // ── 无线调试配对入口（前端只做表单与形态门控，协议在桥里）──
+  console.log('\n[无线调试 · 前端接线]');
+  {
+    const rd = (rel) => fs.readFileSync([rel, '../' + rel].map((f) => path.resolve(process.cwd(), f)).find((f) => fs.existsSync(f)), 'utf8');
+    const html = rd('index.html'), app = rd('js/app.js'), tg = rd('js/tango.js');
+    const iConn = html.indexOf('id="port-input"'), iPair = html.indexOf('id="pair-port-input"');
+    ok(iConn > 0 && iPair > iConn, '表单顺序：① 连接端口在 ② 配对端口之前');
+    ok(/id="pair-code-input"[^>]*maxlength="6"/.test(html), '配对码输入框限 6 位');
+    {
+      const iCode = html.indexOf('id="pair-code-input"'), iPP = html.indexOf('id="pair-port-input"');
+      ok(iCode > 0 && iCode < iPP, '② 组内顺序：左配对码、右配对端口（与电视第二屏一致）');
+      ok(/class="pair-code"[^>]*maxlength="6"/.test(html), '配对码框为大号 6 位输入');
+      {
+        const iRow = html.indexOf('id="port-input"'), iBtn = html.indexOf('id="port-detect"'), iG2 = html.indexOf('id="pair-group"');
+        ok(iBtn > iRow && iBtn < iG2, '「自动填端口」在 ① 行内（第一屏的事归第一屏）');
+        ok(/>自动填端口</.test(html) && !html.includes('自动查端口'), '按钮文案为「自动填端口」，旧名已消失');
+        ok(html.includes('没查到无线调试广播') || app.includes('没查到无线调试广播'), '查不到时说清楚，不假装成功');
+      {
+        const css = fs.readFileSync(rd('css/style.css'), 'utf8');
+        const zToast = +(css.match(/\.toasts\{[^}]*z-index:\s*(\d+)/) || [])[1];
+        const zModal = +(css.match(/#insecure-modal,#port-modal\{[^}]*z-index:\s*(\d+)/) || [])[1];
+        ok(zToast > zModal, `dialog 出现时右下角提示仍可见（toasts ${zToast} > modal ${zModal}）`);
+        ok(html.includes('id="pair-allow"'), '弹窗里有「等电视点允许」的显式状态块');
+        ok(app.includes("why === 'await-allow'"), 'stall 分成「等允许」与「疑似 TLS」两类');
+        ok(app.includes('authTimeoutMs: 90000'), '配对后首连给足 90 秒等人点允许，不再 8 秒判死');
+        ok(/还在等电视|我点过允许了，再连一次/.test(app), '超时话术改成「点完再连」，不是「没成功」');
+        ok(tg.includes('inbound') && tg.includes('stream.inbound() > 0'), 'tango 用入向字节判定：有来文就不是 TLS 端口');
+      }
+      }
+    }
+    ok(!/目前还不能配对|目前还不支持/.test(html), '旧的「不支持配对」文案已清除');
+    ok(html.indexOf('使用配对码配对设备') > 0, '文案告诉用户第二屏才有配对码');
+    ok(app.includes('await autoRecover(ip)') && app.indexOf('autoRecover(ip)') < app.indexOf('showPortDialog(ip, err.code)'),
+      '先静默用已存凭据自愈，失败才弹表单');
+    ok(app.includes('pg.hidden = !canPair') && app.includes('const canPair = await pairAvailable()'),
+      '配对区按「桥的能力」显示，不是按形态常量瞎猜（Docker 的 Go 桥没这三接口 → 不出入口）');
+    ok(tg.includes('wirelessAvailable') && tg.includes("discoverWireless().then(() => true).catch(() => false)"),
+      'tango 用一次 /discover 探测桥是否支持配对');
+    ok(app.includes('if (!(await pairAvailable())) return false'), '不支持配对的桥不会白跑一次 recover');
+    ok(app.includes('T.pairWireless(') && app.includes('T.discoverWireless()') && app.includes('T.recoverWireless(ip)'),
+      '三个接口都接上了');
+    ok(/\^\\d\{6\}\$/.test(app), '提交前校验 6 位配对码');
+    ok(tg.includes('export const wirelessSupported = selfHosted'), 'tango 明确：只有自托管支持配对');
+    for (const r of ["'/discover'", "'/pair'", "'/recover'"]) ok(tg.includes(r), `桥接口 ${r}`);
+    ok(tg.includes("if (d && d.error)") && tg.includes('d.hint || d.error'), '桥返回的 hint 会透传成用户看得懂的话');
+    const kinds = ["'code'", "'tls'", "'cnxn'", "'plaintext'", "'pair-tls'"];
+    ok(kinds.every(k => app.includes('err.code===' + k) || app.includes('err.code === ' + k)), '失败分类文案覆盖五种落点');
+  }
 
   console.log(`\n结果: ${pass} 通过 / ${fail} 失败`);
 } catch (e) {

@@ -240,6 +240,49 @@
     </div>
   </div>
 
+  <!-- 设备没在 5555 上监听时出现：按电视两屏的顺序填 -->
+  <div id="port-modal" hidden>
+    <div class="modal-card">
+      <h3 id="port-title">这台设备的 5555 端口没有反应</h3>
+      <p id="port-desc">多数是重启后调试端口变成了随机值（安卓 11 以上的电视常见）。填一次电视上显示的端口，我连上后会<b>自动把它固定成 5555</b>，以后只填 IP 就能连。</p>
+      <p class="modal-sub">在<b>电视</b>上：<b>设置 → 开发者选项 → 无线调试</b>。第一屏写着「IP 地址与端口」；点开<b>「使用配对码配对设备」</b>后的第二屏才有 6 位配对码和配对端口。</p>
+
+      <div class="field-group">
+        <div class="field-step">① 第一屏：设备地址与连接端口</div>
+        <div class="port-row">
+          <span id="port-modal-ip" class="port-ip"></span>
+          <input id="port-input" type="text" inputmode="numeric" autocomplete="off" placeholder="连接端口，如 37521" spellcheck="false" />
+          <button id="port-detect" class="btn subtle ghost" type="button" title="从局域网自动查出这台盒子的无线调试端口">自动填端口</button>
+        </div>
+      </div>
+
+      <div class="field-group" id="pair-group">
+        <div class="field-step">② 第二屏：配对码与配对端口 <span class="field-note">（设备要求配对时才填，顺序与电视上一样）</span></div>
+        <div class="port-row pair-row">
+          <label class="pair-field"><span class="pair-cap">配对码</span>
+            <input id="pair-code-input" class="pair-code" type="text" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="000000" spellcheck="false" />
+          </label>
+          <label class="pair-field"><span class="pair-cap">配对端口</span>
+            <input id="pair-port-input" class="pair-port" type="text" inputmode="numeric" autocomplete="off" placeholder="如 40217" spellcheck="false" />
+          </label>
+        </div>
+      </div>
+
+      <p class="modal-sub" id="port-stall" hidden>这个端口只接受配对后的加密连接：请把第二屏的<b>配对端口</b>和 <b>6 位配对码</b>填到 ② 里再提交。配对窗口开着别锁屏，码会过期。</p>
+      <div class="allow-wait" id="pair-allow" hidden>
+        <b>电视上应该已经弹出「允许 USB 调试」</b> —— 点<b>允许</b>（能勾「一律允许」就勾上）。
+        <div class="allow-sub">我已经收到设备的应答，只是在等你这一下点击；点完会自动继续，不用重新填。</div>
+      </div>
+      <button id="port-ok" class="btn primary">连接并固定端口</button>
+      <button id="port-cancel" class="btn subtle">取消</button>
+      <p class="modal-sub" id="pair-note">填了 ② 就先配对再连接；只填 ① 则按明文端口直接连。</p>
+      <p class="modal-sub tip-allow">固定好端口后，<b>第一次</b>从本页面连接时电视上会弹「允许 USB 调试」，点<b>允许</b>即可（同一台电脑只需一次）。</p>
+    </div>
+  </div>
+
+  <!-- 仅 URL 带 ?diag=1 时由 app.js 显示：把连不上的原因分类，便于远程定位机型问题 -->
+  <pre id="diag" hidden></pre>
+
   <div id="toasts" class="toasts" aria-live="polite"></div>
 
   <!-- xterm.js + fit 插件（UMD，挂到 window.Terminal / window.FitAddon）-->
