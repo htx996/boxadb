@@ -574,7 +574,7 @@ try {
     const e1 = await runDialog(true, { discoverable: true, connect: [], pairing: [], lastPort: null });
     ok(e1['#port-detect'].hidden === false, '能发现广播（NAS / host 网络）→ 显示「自动填端口」');
     const e2 = await runDialog(true, { discoverable: false, lastPort: 42535, connect: [], pairing: [] });
-    ok(e2['#port-detect'].hidden === true, '发现不了（网络隔离）→ 隐藏按钮，不让人白点');
+    ok(e2['#port-detect'].hidden === false, '发现不了（网络隔离）→ 按钮照样显示');
     ok(e2['#port-input'].value === '42535', '发现不了时 → 预填上次用过的连接端口');
     const e3 = await runDialog(false, null);
     ok(e3['#port-detect'].hidden === true && e3['#pair-group'].hidden === true, '桥不支持配对 → 按钮与配对区都不出现');
