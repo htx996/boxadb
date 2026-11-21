@@ -103,3 +103,10 @@ https://你的NAS地址:8766/
 ## 许可
 
 本项目以 [MIT](LICENSE) 许可开源。
+
+## ❤️ 想支持作者 ☕️
+<a href="https://wkdaily.cpolar.top/01" target="_blank">
+  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
+       alt="Buy Me A Coffee"
+       style="width:15%; height:auto;">
+</a>
