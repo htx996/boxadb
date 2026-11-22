@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
@@ -23,10 +22,15 @@ var webappFS embed.FS
 // 自托管标记：运行时注入 index.html，让前端把桥地址切到「同源 + 前缀」。
 // 不改 JS 源码：仓库前端与镜像前端字节一致。子路径部署用 BRIDGE_BASE_PATH（如 /boxadb）。
 func bridgeMeta() string {
-	prefix := os.Getenv("BRIDGE_BASE_PATH")
+	prefix := ugosBasePath() // BRIDGE_BASE_PATH 优先；UGOS 形态默认 /boxadb
+	platform := ""
+	if ugosMode() {
+		platform = `<meta name="boxadb-platform" content="ugos">`
+	}
 	return `<meta name="boxadb-mode" content="selfhosted">` +
 		`<meta name="boxadb-prefix" content="` + prefix + `">` +
-		`<meta name="boxadb-tls-port" content="` + httpsPort() + `">`
+		`<meta name="boxadb-tls-port" content="` + httpsPort() + `">` +
+		platform
 }
 
 func staticHandler() http.Handler {
@@ -83,4 +87,10 @@ func withSelfHostedMark(fsys fs.FS, name string) ([]byte, bool) {
 func privateOnlyDefault() bool { return true }
 
 // 自托管默认开内置 https（8766）：手机需要安全上下文；BRIDGE_HTTPS_PORT=0 可关。
-func httpsDefault() string { return "8766" }
+// UGOS 形态默认关：https 由系统网关提供，桥只跑纯 http + WS。
+func httpsDefault() string {
+	if ugosMode() {
+		return "0"
+	}
+	return "8766"
+}
