@@ -207,6 +207,10 @@ input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(61,220,132,.16)
 .social-icon{display:inline-flex;align-items:center;justify-content:center;color:var(--muted-2);
   padding:5px;border-radius:8px;margin-left:6px;transition:color .15s,background .15s}
 .social-icon:hover{color:var(--accent);background:rgba(255,255,255,.06)}
+/* 连着的社交图标之间只留 .brand 的 gap 再收 4px，与「教程」的间距对齐 */
+.social-icon + .social-icon{margin-left:-4px}
+.brand-tutorial{color:var(--muted-2);font-size:13px;text-decoration:none;margin-left:-4px;transition:color .15s}
+.brand-tutorial:hover{color:var(--accent)}
 
 /* Toast */
 .toasts{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:10px;z-index:130}
