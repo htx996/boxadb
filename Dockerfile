@@ -17,7 +17,7 @@ WORKDIR /src
 # 无第三方依赖（纯标准库 + 自实现 RFC 6455 WS 帧），
 # 不需要 go.sum。
 COPY go.mod ./
-COPY bridge.go tls.go pairproxy.go webapp_on.go webapp_off.go ./
+COPY bridge.go tls.go pairproxy.go webapp_on.go webapp_off.go runtime.go ./
 
 # webapp/ 只在本阶段生成，宿主机副本已被 .dockerignore 排除，
 # 避免镜像里嵌进陈旧前端。
@@ -26,6 +26,9 @@ COPY index.html ./
 COPY css ./css
 COPY js ./js
 COPY assets/logo.png ./assets/logo.png
+# runtime.go 的 //go:embed all:embedded 需要该目录存在；桌面才放 node-*.gz，Docker 用基座 Node，这里只 .gitkeep
+COPY embedded ./embedded
+
 # 无线配对模块（唯一真源就在本仓 pair/，飞牛仓通过 sync-ui.sh 同步同一份）
 COPY pair ./pair
 
