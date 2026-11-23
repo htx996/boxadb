@@ -52,7 +52,7 @@ async function pairFlow({ host, pairPort, code, connPort, pinPort = 5555, log = 
   }
   let port = Number(connPort) || 0;
   if (!port) {
-    const found = await mdns.connect(2000);
+    const found = await mdns.connect(2000, host);
     const hit = found.find((f) => f.instance === p.identity) || found[0];
     if (hit) port = hit.port;
   }
@@ -86,7 +86,7 @@ async function discoverFlow({ host } = {}) {
   const known = keystore.hintFor(host);
   const lastPort = known && known.port ? Number(known.port) : null;
   if (!discoverable) return { status: 200, body: { discoverable: false, lastPort, pairing: [], connect: [] } };
-  const [pairing, connect] = await Promise.all([mdns.pairing(1800), mdns.connect(1800)]);
+  const [pairing, connect] = await Promise.all([mdns.pairing(1800, host), mdns.connect(1800, host)]);
   const seen = new Set(keystore.list().map((x) => x.instance));
   return { status: 200, body: { discoverable: true, lastPort, pairing, connect: connect.map((c) => ({ ...c, paired: seen.has(c.instance) })) } };
 }

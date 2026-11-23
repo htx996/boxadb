@@ -216,8 +216,7 @@ async function showPortDialog(ip, reason){
         ? '端口上确实有服务，但它是安卓 11+「无线调试」的加密端口。把<b>第二屏</b>的配对端口和 6 位配对码填到 ②，我配完对会<b>自动固定成 5555</b>；以后重启也只要开着无线调试就行。'
         : '端口上确实有服务，但它是安卓 11+「无线调试」的加密端口，明文进不去。<b>当前这个版本（连的是本机/容器里的桥）还不能配对</b>：请先用电脑执行一次 <code>adb tcpip 5555</code> 把盒子端口固定下来，之后回到这里只填 IP 就能连。');
   if(hint) hint.textContent = ip;
-  if(inp) inp.value = (state.prefs.ports && state.prefs.ports[ip]) || '';
-  if (disc && disc.lastPort && inp && !inp.value) inp.value = String(disc.lastPort);
+  if(inp) inp.value = '';
   if(pinp) pinp.value = '';
   if(cinp) cinp.value = '';
   if(ok) ok.textContent = canPair ? '连接并固定端口' : '连接并固定端口';
@@ -265,7 +264,6 @@ async function showPortDialog(ip, reason){
       // 首次用本页面的钥匙连 5555，设备会弹「允许 USB 调试」：这不是失败，等用户点即可（给足 90 秒）
       await T.connect({ ip, authTimeoutMs: 90000, onStall: (why) => handleStall(why, { stall, m }) });
       state.device=await T.fetchDevice(ip); state.connected=true;
-      if (!wantPair) state.prefs.ports = Object.assign({}, state.prefs.ports, { [ip]: port });
       savePrefs();
       m.hidden=true;
       toast('已固定为 5555。第一次连本页面时电视会弹「允许 USB 调试」，点允许即可', '', 9000);

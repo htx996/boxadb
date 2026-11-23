@@ -10,7 +10,11 @@ const HOST = process.env.BOXADB_PAIR_HOST || '127.0.0.1';
 const PIN = Number(process.env.BOXADB_PIN_PORT || 5555);
 keystore.init(process.env.BOXADB_STATE_DIR || path.join(process.env.DATA_DIR || '/data', 'pair'));
 
-const say = (...a) => console.log(new Date().toISOString(), '[pair]', ...a);
+const say = (...a) => {
+  const line = [new Date().toISOString(), '[pair]', ...a].join(' ');
+  console.log(line);
+  if (process.env.BOXADB_LOG_FILE) { try { require('node:fs').appendFileSync(process.env.BOXADB_LOG_FILE, line + '\n'); } catch {} }
+};
 
 // 桥被强杀时来不及回收子进程，这里靠 stdin 管道：父进程一没，读端就 EOF，sidecar 自己退出
 process.stdin.resume();

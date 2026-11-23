@@ -1,8 +1,5 @@
 package main
 
-// 无线配对 sidecar：容器镜像里带 Node 运行时时才启用。
-// 桌面版没有 Node，这里探测失败即返回 nil，三个路由保持 404 —— 前端靠探测隐藏配对入口，
-// 不会给出点了没反应的按钮。
 import (
 	"crypto/rand"
 	"encoding/hex"
@@ -23,43 +20,73 @@ type pairSidecar struct {
 	stdinPipe *os.File
 }
 
-func startPairSidecar() *pairSidecar {
+// 无线配对 sidecar 的运行时来源。
+// 显式环境变量（Docker/NAS 形态）优先；桌面发版走随包 Node（runtime.go）；
+// 都没有即返回 nil，三个路由保持 404 —— 前端靠探测隐藏配对入口，
+// 不会给出点了没反应的按钮。
+type pairRuntime struct {
+	node     string
+	script   string
+	port     string
+	stateDir string // 非空 = 覆盖 BOXADB_STATE_DIR（随包形态没有容器的 /data 约定）
+	logFile  string // 非空 = sidecar 日志落盘（BOXADB_LOG_FILE）
+}
+
+func resolvePairRuntime() *pairRuntime {
 	port := strings.TrimSpace(os.Getenv("BOXADB_PAIR_PORT"))
-	if port == "" {
+	node := strings.TrimSpace(os.Getenv("BOXADB_NODE_BIN"))
+	script := strings.TrimSpace(os.Getenv("BOXADB_PAIR_DAEMON"))
+	if node != "" || script != "" {
+		if port == "" {
+			return nil // 与既往一致：没指定端口就不启用
+		}
+		if node == "" {
+			node = "node"
+		}
+		if script == "" {
+			script = "/app/pair/daemon.js"
+		}
+		if _, err := exec.LookPath(node); err != nil {
+			log.Printf("pair sidecar: 找不到 %s，配对能力关闭", node)
+			return nil
+		}
+		if _, err := os.Stat(script); err != nil {
+			log.Printf("pair sidecar: 找不到 %s，配对能力关闭", script)
+			return nil
+		}
+		return &pairRuntime{node: node, script: script, port: port}
+	}
+	return bundledRuntime()
+}
+
+func startPairSidecar() *pairSidecar {
+	rt := resolvePairRuntime()
+	if rt == nil {
 		return nil
 	}
-	node := os.Getenv("BOXADB_NODE_BIN")
-	if node == "" {
-		node = "node"
-	}
-	script := os.Getenv("BOXADB_PAIR_DAEMON")
-	if script == "" {
-		script = "/app/pair/daemon.js"
-	}
-	if _, err := exec.LookPath(node); err != nil {
-		log.Printf("pair sidecar: 找不到 %s，配对能力关闭", node)
-		return nil
-	}
-	if _, err := os.Stat(script); err != nil {
-		log.Printf("pair sidecar: 找不到 %s，配对能力关闭", script)
-		return nil
-	}
-	cmd := exec.Command(node, script)
+	cmd := exec.Command(rt.node, rt.script)
 	nonce := make([]byte, 16)
 	if _, err := rand.Read(nonce); err != nil {
 		log.Printf("pair sidecar: 随机数生成失败 %v", err)
 		return nil
 	}
 	want := hex.EncodeToString(nonce)
+	state := os.Getenv("BRIDGE_STATE_DIR")
+	if rt.stateDir != "" {
+		state = rt.stateDir
+	}
 	cmd.Env = append(os.Environ(),
-		"BOXADB_PAIR_PORT="+port,
-		"BOXADB_STATE_DIR="+os.Getenv("BRIDGE_STATE_DIR"),
+		"BOXADB_PAIR_PORT="+rt.port,
+		"BOXADB_STATE_DIR="+state,
 		"BOXADB_PAIR_NONCE="+want,
 		"NODE_NO_WARNINGS=1",
 	)
+	if rt.logFile != "" {
+		cmd.Env = append(cmd.Env, "BOXADB_LOG_FILE="+rt.logFile)
+	}
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	s := &pairSidecar{
-		base:   "http://127.0.0.1:" + port,
+		base:   "http://127.0.0.1:" + rt.port,
 		client: &http.Client{Timeout: 40 * time.Second},
 		proc:   cmd,
 	}
@@ -79,7 +106,7 @@ func startPairSidecar() *pairSidecar {
 	}
 	// 端口上可能残留着上一次被 SIGKILL 后变孤儿的旧 sidecar：验明 nonce 才接管，否则会拿到旧行为
 	if !s.waitReady(want) {
-		log.Printf("pair sidecar: 未能验明身份（端口 %s 上可能是残留进程），配对能力关闭", port)
+		log.Printf("pair sidecar: 未能验明身份（端口 %s 上可能是残留进程），配对能力关闭", rt.port)
 		_ = cmd.Process.Kill()
 		return nil
 	}
@@ -149,7 +176,7 @@ func (s *pairSidecar) handle(w http.ResponseWriter, r *http.Request) {
 		log.Printf("pair sidecar 转发失败 %s: %v", r.URL.Path, err)
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusBadGateway)
-		io.WriteString(w, `{"error":"sidecar-unreachable","hint":"配对组件没在运行，请重启容器"}`)
+		io.WriteString(w, `{"error":"sidecar-unreachable","hint":"配对组件没在运行，请重启桥接程序"}`)
 		return
 	}
 	defer resp.Body.Close()

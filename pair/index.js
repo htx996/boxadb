@@ -124,12 +124,20 @@ async function pin({ host, port, identity, psk, pinPort = 5555, timeout = 8000 }
 // 自愈：现查 mDNS（端口每次开机都变）→ 用已存 psk 开门钉端口
 async function recover({ host, pinPort = 5555, timeout = 8000, mdnsMs = 2000 } = {}) {
   if (host && await probe(host, pinPort, 1200)) return { ok: true, already: true, pinPort };   // 端口已通，无需任何自愈
-  const found = await mdns.connect(mdnsMs);
+  const found = await mdns.connect(mdnsMs, host);
   const known = ks.list();
   // 只认「配过对且属于这台 IP」的实例；无归属信息的旧记录仅在当地只有一条凭据时才敢套用
   const sole = known.length === 1 && found.length === 1;
-  const hit = found.find((f) => known.some((k) => k.instance === f.instance &&
+  let hit = found.find((f) => known.some((k) => k.instance === f.instance &&
     (!host || !k.peerHost ? (k.peerHost ? k.peerHost === host : sole) : k.peerHost === host)));
+  // 盒子重启后 mDNS 实例名的随机后缀可能变（adb-<serial>-xxxx 会换），严格匹配会误判成「没配过对」。
+  // 家里只有一台设备、只有一条凭据时，按“唯一候选”直接认它。
+  if (!hit && known.length === 1 && found.length === 1) hit = found[0];
+  const line = '[recover] found=' + (found.map((f) => f.instance + ':' + f.port).join(',') || '-') +
+    ' known=' + (known.map((k) => k.instance + '@' + (k.peerHost || '-')).join(',') || '-') +
+    ' hit=' + (hit ? hit.instance : '-');
+  console.log(line);
+  if (process.env.BOXADB_LOG_FILE) { try { require('node:fs').appendFileSync(process.env.BOXADB_LOG_FILE, new Date().toISOString() + ' ' + line + '\n'); } catch {} }
   if (!hit) return { ok: false, need: found.length ? 'pair' : 'manual-port', discovered: found,
     reason: found.length ? '发现的实例没有已存凭据' : '未发现无线调试广播（可能是自动发现不可用，也可能开关确实没开）' };
   const rec = ks.lookup(hit.instance);

@@ -60,13 +60,20 @@ function parse(buf) {
   }
   return out;
 }
-const SKIP_IF = /^(docker|br-|veth|virbr|br|lo|tun|tap|cni|flannel|kube)/;
-function lanIPv4() {
-  // 只认物理/业务网口：NAS 上 docker0 与一堆 br-* 桥接口会把组播发错网段
+// 只跳过虚拟/隧道网卡；**不能跳过 br* 与 bond***：绿联等 NAS 开了虚拟机后，
+// 业务地址常常挂在 br0 / br-lan 这类桥接口上，跳过它 ＝ 一个网卡都不剩，组播永远发不出去。
+const SKIP_IF = /^(docker|veth|virbr|tun|tap|cni|flannel|kube|lo)/;
+function lanIPv4(host) {
+  const want = host ? String(host).split('.').slice(0, 3).join('.') : null;
   const out = [];
   for (const [dev, addrs] of Object.entries(os.networkInterfaces())) {
     if (SKIP_IF.test(dev)) continue;
-    for (const a of addrs || []) if (a.family === 'IPv4' && !a.internal) out.push({ dev, address: a.address });
+    for (const a of addrs || []) {
+      if (a.family !== 'IPv4' || a.internal || a.address.startsWith('127.')) continue;
+      // 有目标时只发往和目标同 /24 的网卡，避免组播被送到 docker/其它网段
+      if (want && a.address.split('.').slice(0, 3).join('.') !== want) continue;
+      out.push({ dev, address: a.address });
+    }
   }
   return out.slice(0, 4);
 }
@@ -97,10 +104,17 @@ function buildQuery(names, qu) {
 }
 // 每个候选网口各开一对 socket（临时端口 / 5353），并分别发带与不带 QU 位的查询后合并：
 // macOS 上应答回到临时端口，Linux 多网卡上只有走对网口 + 5353 才收得到 SRV
-async function ask(names, ms) {
+async function ask(names, ms, host) {
   const found = [];
   const socks = [];
-  for (const it of lanIPv4()) {
+  const ifaces = lanIPv4(host);
+  if (host && process.env.BOXADB_LOG_FILE) {
+    try {
+      require('node:fs').appendFileSync(process.env.BOXADB_LOG_FILE,
+        new Date().toISOString() + ' [mdns] host=' + host + ' ifaces=' + (ifaces.map((i) => i.dev + '/' + i.address).join(',') || '-') + '\n');
+    } catch {}
+  }
+  for (const it of ifaces) {
     for (const port of [0, 5353]) {
       const sk = await openSocket(port, it.address);
       if (!sk) continue;
@@ -116,11 +130,11 @@ async function ask(names, ms) {
   for (const sk of socks) { try { sk.close(); } catch {} }
   return found;
 }
-async function browse(service, ms = 1500) {
+async function browse(service, ms = 1500, host) {
   const seen = new Map();
-  let recs = await ask([service], ms);
+  let recs = await ask([service], ms, host);
   const ptrs = [...new Set(recs.filter((r) => r.type === 'PTR' && r.name).map((r) => r.name))];
-  if (ptrs.length) recs = recs.concat(await ask(ptrs, ms));
+  if (ptrs.length) recs = recs.concat(await ask(ptrs, ms, host));
   for (const r of recs) {
     if (r.type !== 'SRV') continue;
     const inst = r.name.split('.')[0];
@@ -128,8 +142,9 @@ async function browse(service, ms = 1500) {
   }
   return [...seen.values()];
 }
-const pairing = ms => browse(PAIRING, ms);
-const connect = ms => browse(CONNECT, ms);
+// 兼容旧签名：(ms) 或 (ms, host)
+const pairing = (ms, host) => browse(PAIRING, ms, host);
+const connect = (ms, host) => browse(CONNECT, ms, host);
 // 能否在本机发现 mDNS 广播：判据是「有没有和目标同一 /24 的网口」。
 // NAT 容器里只有容器内网段（如 172.17/192.168.215），组播到不了局域网；NAS 版跑在主机上则同段可用。
 function discoverable(host) {

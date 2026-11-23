@@ -51,6 +51,11 @@ jobs:
         with:
           go-version: '1.21'
 
+      # 桌面随包 Node：按矩阵平台取钉死版本（scripts/node-checksums.json），
+      # 构建产物里才能启动配对 sidecar（无线调试需要 TLS1.3 外部 PSK，Go 做不了）
+      - name: Fetch bundled Node runtime
+        run: bash scripts/fetch-node.sh ${{ matrix.goos }}-${{ matrix.goarch }}
+
       - name: Build static binary
         env:
           GOOS: ${{ matrix.goos }}

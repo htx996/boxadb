@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -30,6 +31,18 @@ import (
 )
 
 // ── 配置 ──
+
+// 应用数据目录：容器可用 BRIDGE_STATE_DIR 指定卷；桌面形态落用户缓存目录，
+// 随包 Node 的释放位置和配对密钥都放这里（跨升级保留）。
+func dataDir() string {
+	if d := os.Getenv("BRIDGE_STATE_DIR"); d != "" {
+		return d
+	}
+	if d, err := os.UserCacheDir(); err == nil {
+		return filepath.Join(d, "boxadb")
+	}
+	return os.TempDir()
+}
 
 // 桌面形态默认只监听回环；Docker/NAS 形态用 BRIDGE_HOST=0.0.0.0 对外提供服务。
 func listenHost() string {
@@ -248,7 +261,7 @@ func handleTunnel(w http.ResponseWriter, r *http.Request) {
 
 func allowCross(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "*")
 	// GitHub Pages(https) 调 ws://127.0.0.1 的 PNA 预检
 	w.Header().Set("Access-Control-Allow-Private-Network", "true")
@@ -258,7 +271,8 @@ var sidecar *pairSidecar
 
 func router(w http.ResponseWriter, r *http.Request) {
 	allowCross(w)
-	// 配对三接口只在容器形态（镜像带 Node sidecar）存在；桌面版直接落到后面的 404
+	// 配对三接口由 sidecar 提供：容器形态镜像自带 Node，桌面发版形态用随包 Node（见 runtime.go）；
+	// 都没有时直接落到后面的 404，前端靠探测隐藏配对入口
 	if sidecar != nil && (r.URL.Path == "/pair" || r.URL.Path == "/recover" || r.URL.Path == "/discover") {
 		sidecar.handle(w, r)
 		return

@@ -13,3 +13,7 @@ scratch/
 
 # 自托管形态的前端产物（scripts/make-webapp.sh 生成，源码在仓库根）
 webapp/
+
+# 随包 Node 产物（scripts/fetch-node.sh 生成，源码不入库）
+embedded/node-*
+!embedded/.gitkeep
