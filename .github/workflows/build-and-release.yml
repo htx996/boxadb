@@ -71,6 +71,10 @@ jobs:
           # links the Windows resource object boxadb_windows_amd64.syso
           # (embedded app icon). That file is named *_windows_amd64.syso, so it
           # is included only for windows/amd64 and ignored on the darwin build.
+          # NOTE: windows/arm64 intentionally ships without an embedded icon —
+          # the rsrc-generated *_windows_arm64.syso carries relocations Go 1.21's
+          # ARM64 PE linker rejects ("unknown ARM64 relocation type 3"). The exe
+          # still builds and runs; only the Explorer icon is the Go default.
           go build -trimpath -ldflags='-s -w' \
             -o "dist/${{ matrix.artifact }}" .
           ls -la dist/
