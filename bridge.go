@@ -271,6 +271,12 @@ var sidecar *pairSidecar
 
 func router(w http.ResponseWriter, r *http.Request) {
 	allowCross(w)
+	// CORS/PNA 预检必须本地应答 204：转发给 sidecar 会得到 404，浏览器会拦掉
+	// Pages 过来的配对 POST（以及新版的 /discover 探测），桌面配对直接瘫痪
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	// 配对三接口由 sidecar 提供：容器形态镜像自带 Node，桌面发版形态用随包 Node（见 runtime.go）；
 	// 都没有时直接落到后面的 404，前端靠探测隐藏配对入口
 	if sidecar != nil && (r.URL.Path == "/pair" || r.URL.Path == "/recover" || r.URL.Path == "/discover") {
@@ -285,8 +291,6 @@ func router(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	switch {
-	case r.Method == http.MethodOptions:
-		w.WriteHeader(http.StatusNoContent)
 	case r.URL.Path == "/health":
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Write([]byte("boxadb bridge ok\n"))
