@@ -34,6 +34,10 @@ jobs:
             goarch: amd64
             suffix: '.exe'
             artifact: boxadb-bridge-windows-amd64.exe
+          - goos: windows
+            goarch: arm64
+            suffix: '.exe'
+            artifact: boxadb-bridge-windows-arm64.exe
           - goos: linux
             goarch: amd64
             suffix: ''
@@ -87,18 +91,18 @@ jobs:
         if: matrix.goos == 'windows'
         run: |
           mkdir -p winpkg
-          cp dist/boxadb-bridge-windows-amd64.exe winpkg/boxadb-bridge.exe
+          cp "dist/${{ matrix.artifact }}" winpkg/boxadb-bridge.exe
           cp assets/AppIcon.ico winpkg/AppIcon.ico
           cp install.bat winpkg/install.bat
           cp INSTALL-windows.txt winpkg/README.txt
-          ( cd winpkg && zip -r ../dist/boxadb-windows.zip . )
+          ( cd winpkg && zip -r "../dist/boxadb-windows-${{ matrix.goarch }}.zip" . )
           ls -la dist/
       - name: Upload Windows zip artifact
         if: matrix.goos == 'windows'
         uses: actions/upload-artifact@v4
         with:
-          name: boxadb-windows.zip
-          path: dist/boxadb-windows.zip
+          name: boxadb-windows-${{ matrix.goarch }}.zip
+          path: dist/boxadb-windows-${{ matrix.goarch }}.zip
           if-no-files-found: error
 
   release:
@@ -141,9 +145,9 @@ jobs:
             ```powershell
             iwr https://raw.githubusercontent.com/wukongdaily/boxadb/main/install.bat -o $env:TEMP\install.bat; & $env:TEMP\install.bat
             ```
-            （install.bat 会自动拉取本 release 的 `boxadb-windows.zip`、解压、去掉"来自网络"标记，规避 SmartScreen 蓝盾）
+            （install.bat 会按本机 CPU 架构自动拉取本 release 对应的 `boxadb-windows-amd64.zip` / `boxadb-windows-arm64.zip`、解压、去掉"来自网络"标记，规避 SmartScreen 蓝盾）
 
-            或走图形方式：下载 `boxadb-windows.zip` → 解压 → 双击 `install.bat`。
+            或走图形方式：按你的 CPU 下载 `boxadb-windows-amd64.zip` 或 `boxadb-windows-arm64.zip` → 解压 → 双击 `install.bat`。
 
             **Linux（x86_64 / ARM64）** —— 打开终端粘贴：
             ```bash
@@ -151,7 +155,7 @@ jobs:
             ```
             （同一脚本按 `uname` 自动选 `boxadb-bridge-linux-amd64` 或 `boxadb-bridge-linux-arm64`，装到 `~/.local/bin/boxadb-bridge`；Linux 无隔离/签名问题，装完直接 `boxadb-bridge` 运行。）
 
-            **产物说明：** macOS 按 CPU 自动选择 `boxadb-bridge-darwin-arm64`（Apple Silicon）或 `boxadb-bridge-darwin-amd64`（Intel），由 install.sh 处理隔离属性；Linux 提供 `boxadb-bridge-linux-amd64` / `boxadb-bridge-linux-arm64`（静态编译、通用各发行版）；Windows 只发布 `boxadb-windows.zip`（内含 exe + 图标 + 安装脚本），不再单独提供散装 exe。
+            **产物说明：** macOS 按 CPU 自动选择 `boxadb-bridge-darwin-arm64`（Apple Silicon）或 `boxadb-bridge-darwin-amd64`（Intel），由 install.sh 处理隔离属性；Linux 提供 `boxadb-bridge-linux-amd64` / `boxadb-bridge-linux-arm64`（静态编译、通用各发行版）；Windows 发布 `boxadb-windows-amd64.zip` 与 `boxadb-windows-arm64.zip`（各内含对应架构 exe + 图标 + 安装脚本），不再单独提供散装 exe。
 
             ### 怎么用
             1. 双击桌面「BoxADB 桥接」快捷方式 → 弹窗口跑桥（保持别关）
@@ -164,7 +168,8 @@ jobs:
             staging/boxadb-bridge-darwin-amd64
             staging/boxadb-bridge-linux-amd64
             staging/boxadb-bridge-linux-arm64
-            staging/boxadb-windows.zip
+            staging/boxadb-windows-amd64.zip
+            staging/boxadb-windows-arm64.zip
           draft: false
           prerelease: false
           make_latest: true

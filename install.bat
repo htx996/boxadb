@@ -38,10 +38,16 @@ if not exist "%APP_DIR%" mkdir "%APP_DIR%"
 REM 1) Get exe + ico: copy from this folder if present, else download the zip
 if exist "%SRC_DIR%boxadb-bridge.exe" goto :copylocal
 
-echo No bundled files next to install.bat, downloading boxadb-windows.zip...
-curl -fL -o "%TEMP%\boxadb-windows.zip" "https://github.com/wukongdaily/boxadb/releases/latest/download/boxadb-windows.zip"
+REM Pick the zip matching this machine's CPU architecture (default amd64)
+set "WINARCH=amd64"
+if /I "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "WINARCH=arm64"
+if /I "%PROCESSOR_ARCHITEW6432%"=="ARM64" set "WINARCH=arm64"
+set "ZIPNAME=boxadb-windows-%WINARCH%.zip"
+
+echo No bundled files next to install.bat, downloading %ZIPNAME%...
+curl -fL -o "%TEMP%\%ZIPNAME%" "https://github.com/wukongdaily/boxadb/releases/latest/download/%ZIPNAME%"
 if errorlevel 1 goto :dlfail
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$d=Join-Path $env:TEMP 'boxadb-win'; Expand-Archive -LiteralPath (Join-Path $env:TEMP 'boxadb-windows.zip') -DestinationPath $d -Force; Copy-Item -LiteralPath (Join-Path $d 'boxadb-bridge.exe') -Destination '%BIN%' -Force; Copy-Item -LiteralPath (Join-Path $d 'AppIcon.ico') -Destination '%ICON%' -Force"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$d=Join-Path $env:TEMP 'boxadb-win'; Expand-Archive -LiteralPath (Join-Path $env:TEMP '%ZIPNAME%') -DestinationPath $d -Force; Copy-Item -LiteralPath (Join-Path $d 'boxadb-bridge.exe') -Destination '%BIN%' -Force; Copy-Item -LiteralPath (Join-Path $d 'AppIcon.ico') -Destination '%ICON%' -Force"
 if errorlevel 1 goto :unzfail
 goto :setup
 

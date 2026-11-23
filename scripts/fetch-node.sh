@@ -27,6 +27,7 @@ case "$GOOS_GOARCH" in
   linux-amd64)  DIST="linux-x64";  EXT="tar.xz"; BIN="bin/node" ;;
   linux-arm64)  DIST="linux-arm64"; EXT="tar.xz"; BIN="bin/node" ;;
   windows-amd64) DIST="win-x64";   EXT="zip";    BIN="node.exe" ;;
+  windows-arm64) DIST="win-arm64";  EXT="zip";    BIN="node.exe" ;;
   *) echo "不支持的平台: $GOOS_GOARCH" >&2; exit 1 ;;
 esac
 
