@@ -200,7 +200,6 @@ export async function deviceSdk() {
 // 让 adbd 自己切到固定端口（等价于电脑上的 adb tcpip 5555）：
 // 走已建立的 ADB 通道，不需要 adb 二进制、不需要 root、不需要电脑参与。
 // ── 无线调试配对：浏览器拿不到 TLS 客户端证书与导出密钥，只有桥能做 ──
-export const wirelessSupported = selfHosted;
 async function api(path, body) {
   const init = body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : undefined;
   const r = await fetch(BRIDGE_BASE + path, init);
@@ -211,8 +210,8 @@ async function api(path, body) {
 }
 export const discoverWireless = (host) => api('/discover' + (host ? '?host=' + encodeURIComponent(host) : ''));
 let wirelessProbe = null;
-export function wirelessAvailable() {              // 桥是否真的实现了配对接口（Go 桥没有 → 界面不出配对口）
-  if (!selfHosted) return Promise.resolve(false);
+export function wirelessAvailable() {              // 桥是否真的实现了配对接口（桥没带配对组件 → 404 → 界面不出配对口）
+  // 所有形态一律以探测为准，绝不按形态写死：Pages+桌面随包 Node 的桥同样支持配对。
   // 必须看到「发现结果的样子」才算支持：只看「没报错」会被 SPA 兜底（200 + index.html）骗出死控件
   if (!wirelessProbe) wirelessProbe = discoverWireless().then((d) => !!(d && Array.isArray(d.connect))).catch(() => false);
   return wirelessProbe;
