@@ -35,6 +35,7 @@ async function bridgeStream(host, port) {
   const socket = new WebSocket(wsUrl);
   socket.binaryType = 'arraybuffer';
   let inbound = 0;                       // 入向字节：有来文＝adbd 在说话（多半是 AUTH，等用户点允许）
+  let firstByte = -1;                    // 首字节判型：'C'/'A'＝明文 ADB 报文；0x14-0x17＝TLS 记录（加密端口）
 
   await new Promise((resolve, reject) => {
       const t = setTimeout(() => { try { socket.close(); } catch {} const e = new Error('连接超时：' + bridgeHint); e.code = 'BRIDGE_TIMEOUT'; reject(e); }, 8000);
@@ -45,7 +46,10 @@ async function bridgeStream(host, port) {
   const readable = new ReadableStream({
     start(c) {
       socket.onmessage = e => {
-        if (e.data instanceof ArrayBuffer) { inbound += e.data.byteLength; c.enqueue(new Uint8Array(e.data)); }
+        if (e.data instanceof ArrayBuffer) {
+          if (firstByte < 0 && e.data.byteLength > 0) firstByte = new Uint8Array(e.data)[0];
+          inbound += e.data.byteLength; c.enqueue(new Uint8Array(e.data));
+        }
         else c.error(new Error('桥接返回了非二进制数据'));
       };
       socket.onerror = () => c.error(new Error('桥接连接错误'));
@@ -65,6 +69,7 @@ async function bridgeStream(host, port) {
       writable: stream.pipeFrom(writable, new adb.AdbPacketSerializeStream()),
     },
     inbound: () => inbound,
+    firstByte: () => firstByte,
     closeSocket: () => { try { socket.close(); } catch {} },
   };
 }
@@ -82,6 +87,9 @@ export async function connect({ ip, port = DEFAULT_PORT, onStall, authTimeoutMs 
     throw e;
   }
   const { connection, closeSocket } = stream;
+  // 对端首字节是 TLS 记录头（0x14-0x17）＝无线调试的加密端口，明文进不去
+  const isTlsPeer = () => { const b = stream.firstByte ? stream.firstByte() : -1; return b >= 0x14 && b <= 0x17; };
+  const tlsErr = () => { const err = new Error('这个端口只接受加密连接（无线调试），需要配对'); err.code = 'NEED_PAIRING'; return err; };
   let transport;
   try {
     // 认证本身最长等 30 秒（盒子弹窗要点允许）；但 8 秒内一个 ADB 报文都没有，
@@ -94,6 +102,9 @@ export async function connect({ ip, port = DEFAULT_PORT, onStall, authTimeoutMs 
     // 关键区分：8 秒没结果，但期间**有报文往来** = adbd 已发了 AUTH、正等用户在盒子上点「允许」，
     // 这不是 TLS 端口、更不是失败；只有完全没来文才像 TLS 配对端口。
     if (first === 'stall') {
+      // 加密端口最常见：要么回了 TLS 记录（首字节 0x14-0x17），要么干脆沉默。
+      // 两种都立刻判「需要配对」，别让用户干等满 authTimeoutMs。
+      if (isTlsPeer()) throw tlsErr();
       if (stream.inbound && stream.inbound() > 0) {
         diag.kind = 'D-明文可达，等盒子授权';
         diag.detail = `已收到 ${stream.inbound()} 字节：设备在等用户点「允许 USB 调试」`;
@@ -102,11 +113,14 @@ export async function connect({ ip, port = DEFAULT_PORT, onStall, authTimeoutMs 
         diag.kind = 'C-端口无响应（疑似 TLS 配对端口）';
         diag.detail = `${stallMs / 1000} 秒内没有任何 ADB 报文：对端在等 TLS 握手，明文进不去`;
         if (onStall) { try { onStall('tls'); } catch {} }
+        throw tlsErr();
       }
     }
     transport = await withTimeout(auth, authTimeoutMs, '还在等电视上的「允许 USB 调试」：点完允许再按一次连接即可');
   } catch (e) {
     closeSocket();
+    // 明文报文被 TLS 端口拒掉时，解析流会先炸——首字节说了算，优先判加密端口
+    if (isTlsPeer()) { diag.kind = 'C-端口只接受 TLS（无线调试配对类）'; diag.detail = String(e && e.message || e); throw tlsErr(); }
     const m = String(e?.message || e);
     if (/auth/i.test(m)) { diag.kind = 'D-明文可达，等盒子授权'; diag.detail = m; throw new Error('设备未授权：请在电视/盒子上点「允许 USB 调试」（勾上一律允许）后重试'); }
     // adbd 应答一下就断开：典型是端口上跑的是无线调试（TLS）而不是明文 ADB，或根本没开 5555

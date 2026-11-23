@@ -105,10 +105,10 @@ async function doConnect() {
     renderDiag();
   } catch (err) {
     renderDiag();
-    // 端口不对的两种表现都要给一次机会：A=5555 没人监听，C=有应答但不是明文 ADB
-    if (err && (err.code === 'NEED_PORT' || err.code === 'BRIDGE_UNREACHABLE')) {
+    // 端口不对的几种表现都给一次机会：A=5555 没人监听，C=有应答但不是明文 ADB，T=明文撞进加密端口
+    if (err && (err.code === 'NEED_PORT' || err.code === 'NEED_PAIRING' || err.code === 'BRIDGE_UNREACHABLE')) {
       if (await autoRecover(ip)) return;          // 以前配过对：静默把端口钉回来，不打扰用户
-      showPortDialog(ip, err.code); return;
+      showPortDialog(ip, err.code === 'NEED_PAIRING' ? 'NEED_PORT' : err.code); return;
     }
     toast('连接失败：'+err.message,'err',4200);
   } finally { state.connecting=false; renderStatus(); if (state.connected) refreshApps(); }
@@ -183,13 +183,14 @@ function handleStall(why, ctx = {}) {
     return;
   }
   if (stall && m && !m.hidden) stall.hidden = false;
-  toast('这个端口没有任何响应，可能是需要无线调试配对的设备…', 'warn', 6000);
+  toast('这个端口是加密端口（无线调试），需要配对', 'warn', 6000);
 }
 
 let pairCap = null;
 let lastRecover = null;   // 容器等查不到广播的环境：把「请填连接端口」带到弹窗上
+// 配对能力以桥的实际应答为准（/discover 404＝这个桥没有配对组件，入口自动隐藏）。
+// 不再按形态写死：桌面 Pages + 随包 Node 的桥同样能配对。
 async function pairAvailable() {
-  if (!SELF_HOSTED) return false;
   if (pairCap === null) { try { pairCap = await (await tango()).wirelessAvailable(); } catch { pairCap = false; } }
   return pairCap;
 }
@@ -272,6 +273,13 @@ async function showPortDialog(ip, reason){
     }catch(err){
       renderDiag();
       const msg = err && err.message ? err.message : String(err);
+      if (err && err.code === 'NEED_PAIRING') {
+        // 填的是加密端口但没填 ②：先试已存凭据静默恢复；不行就回到同一个弹窗、聚焦 ②
+        if (await autoRecover(ip)) { m.hidden = true; ok.textContent = '连接并固定端口'; return true; }
+        showPortDialog(ip, 'NEED_PORT');
+        const c2 = $('#pair-code-input'); if (c2) setTimeout(() => c2.focus(), 80);
+        return;
+      }
       if (/还在等电视|允许 USB 调试/.test(msg)) { toast(msg, 'warn', 12000); ok.textContent='我点过允许了，再连一次'; ok.disabled=false; return; }
       if (err && (err.code==='code'||err.step==='code')) toast('配对码不对或已过期：回到电视那个窗口，重新抄一遍 6 位码','err',8000);
       else if (err && (err.code==='tls'||err.code==='cnxn')) toast('这台设备的配对已失效，请重新开一次配对窗口','err',8000);
