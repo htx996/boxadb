@@ -24,8 +24,15 @@
 网页和桥装在同一个容器里，**局域网内任何设备打开网址就能用**，不用每台电脑再开桥。
 
 ```bash
-docker run -d --name boxadb --restart unless-stopped --network host \
+docker run -d --name boxadb --restart unless-stopped \
+  --network host \
   -v boxadb-data:/data \
+  -e BRIDGE_HOST=0.0.0.0 \
+  -e BRIDGE_PORT=8765 \
+  -e BRIDGE_HTTPS_PORT=8766 \
+  -e BRIDGE_PRIVATE_ONLY=1 \
+  -e BRIDGE_STATE_DIR=/data \
+  -e TZ=Asia/Shanghai \
   wukongdaily/boxadb:latest
 ```
 
@@ -45,6 +52,28 @@ https://你的NAS地址:8766/
 - **`--network host` 不是可选项**：Docker 默认桥接会把连接来源改写成 docker0 虚拟地址，盒子上的 adb 授权就被记到那个假地址上，出现忽好忽坏的未授权；而且「无线调试」的端口广播也收不到，配对时只能手填端口。系统图形界面不支持 host 网络时，退成 `-p 8765:8765 -p 8766:8766` 也能用，只是每次都要自己抄端口。
 - 挂了 `-v boxadb-data:/data` 这个卷，重启容器不会换证书，不用反复点"继续访问"。**配对凭据也存在这里**，删卷等于重新配一次对。
 - 完整参数、Docker Compose 写法和常见问题见 [INSTALL-docker.md](INSTALL-docker.md)。
+
+## Docker Compose 部署
+```bash
+services:
+  boxadb:
+    image: wukongdaily/boxadb:latest
+    container_name: boxadb
+    restart: unless-stopped
+    network_mode: host          # ← 关键：用 host模式 这样才能完整使用
+    volumes:
+      - boxadb-data:/data
+    environment:
+      BRIDGE_HOST: 0.0.0.0
+      BRIDGE_PORT: "8765"
+      BRIDGE_HTTPS_PORT: "8766"
+      BRIDGE_PRIVATE_ONLY: "1"
+      BRIDGE_STATE_DIR: /data
+      BRIDGE_TLS_HOSTS: 192.168.66.194  # 改成你的NAS的IP地址
+      TZ: Asia/Shanghai    
+volumes:
+  boxadb-data:
+```
 
 ## 无线调试配对 🆕
 
