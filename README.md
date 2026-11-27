@@ -1,6 +1,5 @@
 # 盒子助手网页版 [![bilibili](https://img.shields.io/badge/B站·教程-A0AABC?style=flat&logo=bilibili&logoColor=fff&labelColor=FB7299&color=3a3a44)](https://www.bilibili.com/video/BV1RwsG6dEd9)
 
-
 网页版 ADB 助手，专为电视盒子 / Android TV 设计。
 **一个网页 → 连上局域网里的盒子 → 装 APK / 终端 / 遥控器 / 截图 / 重启。**
 
@@ -8,9 +7,9 @@
 
 | 用法 | 适合谁 | 需要准备什么 |
 |---|---|---|
-| **网页版 + 本机桥** | 只在电脑上用 | 双击打开桥接程序，再开网页 |
-| **NAS / Docker 版** 🆕 | 家里有 NAS / 软路由，想让手机平板也能随时用 | 一行 `docker run`，之后只开浏览器 |
-| **[飞牛 fnOS 原生版](https://github.com/wukongdaily/boxadb-fnos)** | 用飞牛的人 | 装 fpk，从飞牛桌面点图标 |
+| **[网页版 + 本机桥](https://www.bilibili.com/video/BV1RwsG6dEd9)** | 只在电脑上用（windows/macOS/Linux） | 双击打开桥接程序，再开网页 |
+| **[NAS / Docker 版](https://hub.docker.com/r/wukongdaily/boxadb)** 🆕 | 家里有 NAS / 软路由，想让手机平板也能随时用 | 一行 `docker run`，之后只开浏览器 |
+| **[飞牛 fnOS 原生版](https://github.com/wukongdaily/boxadb-fnos)** | 用飞牛的人 | 装 fpk或应用商店下载，从飞牛桌面点图标 |
 
 ## 快速开始
 电脑打开桥接程序，再打开网页，就能用了<br>
@@ -19,7 +18,7 @@
 2. 浏览器打开 https://wukongdaily.github.io/boxadb/ ，填盒子 IP（端口 5555 自动补）→ 点「连接设备」
 3. 用完关掉那个窗口，端口立即释放，不留后台
 
-## NAS / Docker 版 🆕
+## NAS / Docker 版 🆕 [![bilibili](https://img.shields.io/badge/B站·视频教学docker部署-A0AABC?style=flat&logo=bilibili&logoColor=fff&labelColor=FB7299&color=3a3a44)](https://www.bilibili.com/video/BV1Bg1Ez7EUC/)
 
 网页和桥装在同一个容器里，**局域网内任何设备打开网址就能用**，不用每台电脑再开桥。
 
@@ -75,7 +74,7 @@ volumes:
   boxadb-data:
 ```
 
-## 无线调试配对 🆕
+## 无线调试配对 🆕 [![bilibili](https://img.shields.io/badge/B站·视频教学无线配对-A0AABC?style=flat&logo=bilibili&logoColor=fff&labelColor=FB7299&color=3a3a44)](https://www.bilibili.com/video/BV1Bg1Ez7EUC/)
 
 这一节**只适用于带「无线调试」的设备**。市面上很多电视/盒子只需要打开 USB 调试开关即可，无需关注。
 
